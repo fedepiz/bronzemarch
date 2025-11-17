@@ -1,11 +1,17 @@
+use std::collections::BTreeSet;
+
 use slotmap::{SlotMap, new_key_type};
+use util::tally::Tally;
 
 #[derive(Default)]
 pub struct Simulation {
     pub(crate) sites: Sites,
+    pub(crate) good_types: SlotMap<GoodId, GoodData>,
+    pub(crate) building_types: SlotMap<BuildingTypeId, BuildingType>,
     pub(crate) entities: SlotMap<EntityId, EntityData>,
     pub(crate) locations: SlotMap<LocationId, LocationData>,
     pub(crate) parties: SlotMap<PartyId, PartyData>,
+    pub(crate) buildings: SlotMap<BuildingId, BuildingData>,
 }
 
 impl Simulation {
@@ -16,6 +22,73 @@ impl Simulation {
     }
     pub fn tick(&mut self, request: TickRequest) -> SimView {
         self::tick(self, request)
+    }
+}
+
+trait Tagged {
+    fn tag(&self) -> &str;
+}
+
+trait TaggedCollection {
+    type Output;
+
+    fn lookup(&self, tag: &str) -> Option<Self::Output>;
+}
+
+impl<K: slotmap::Key, V: Tagged> TaggedCollection for SlotMap<K, V> {
+    type Output = K;
+
+    fn lookup(&self, tag: &str) -> Option<Self::Output> {
+        self.iter()
+            .find(|(_, data)| data.tag() == tag)
+            .map(|(id, _)| id)
+    }
+}
+
+fn parse_tally<C: TaggedCollection>(
+    coll: &C,
+    items: &[(&str, f64)],
+    kind_name: &str,
+) -> Tally<C::Output>
+where
+    C::Output: Copy + Ord,
+{
+    let mut out = Tally::new();
+    for (tag, value) in items {
+        match coll.lookup(tag) {
+            Some(id) => out.add_one(id, *value),
+            None => println!("Undefined {kind_name} with tag '{tag}'"),
+        }
+    }
+    out
+}
+
+new_key_type! { pub(crate) struct GoodId; }
+
+pub(crate) struct GoodData {
+    pub tag: &'static str,
+    pub name: &'static str,
+    pub price: f64,
+}
+
+impl Tagged for GoodData {
+    fn tag(&self) -> &str {
+        self.tag
+    }
+}
+
+new_key_type! { pub(crate) struct BuildingTypeId; }
+
+pub(crate) struct BuildingType {
+    pub tag: &'static str,
+    pub name: &'static str,
+    pub inputs: Tally<GoodId>,
+    pub outputs: Tally<GoodId>,
+}
+
+impl Tagged for BuildingType {
+    fn tag(&self) -> &str {
+        self.tag
     }
 }
 
@@ -31,6 +104,7 @@ pub(crate) struct SiteData {
     pub tag: String,
     pub pos: V2,
     pub neighbours: Vec<SiteId>,
+    pub location: Option<LocationId>,
 }
 
 #[derive(Default)]
@@ -45,6 +119,7 @@ impl Sites {
             tag: tag.into(),
             pos,
             neighbours: vec![],
+            location: None,
         });
         id
     }
@@ -71,6 +146,21 @@ impl Sites {
     pub fn get(&self, id: SiteId) -> Option<&SiteData> {
         self.entries.get(id.0)
     }
+
+    pub fn bind_location(&mut self, id: SiteId, location: LocationId) {
+        if let Some(site) = self.entries.get_mut(id.0) {
+            assert!(site.location.is_none());
+            site.location = Some(location);
+        }
+    }
+}
+
+new_key_type! { pub(crate) struct BuildingId; }
+
+pub(crate) struct BuildingData {
+    pub typ: BuildingTypeId,
+    pub location: LocationId,
+    pub size: i64,
 }
 
 #[derive(Default)]
@@ -141,6 +231,7 @@ impl Extents {
 pub(crate) struct LocationData {
     pub entity: EntityId,
     pub site: SiteId,
+    pub buildings: BTreeSet<BuildingId>,
 }
 
 pub(crate) struct PartyData {
@@ -155,6 +246,71 @@ pub struct TickRequest {
 }
 
 fn init(sim: &mut Simulation) {
+    // Init goods
+    {
+        struct Desc<'a> {
+            tag: &'a str,
+            name: &'a str,
+            price: f64,
+        }
+
+        const DESCS: &[Desc] = &[
+            Desc {
+                tag: "wheat",
+                name: "Wheat",
+                price: 10.,
+            },
+            Desc {
+                tag: "lumber",
+                name: "Lumber",
+                price: 10.,
+            },
+        ];
+
+        for desc in DESCS {
+            sim.good_types.insert(GoodData {
+                tag: desc.tag,
+                name: desc.name,
+                price: desc.price,
+            });
+        }
+    }
+
+    // Init buildings
+    {
+        struct Desc<'a> {
+            tag: &'a str,
+            name: &'a str,
+            inputs: &'a [(&'a str, f64)],
+            outputs: &'a [(&'a str, f64)],
+        }
+
+        const DESCS: &[Desc] = &[
+            Desc {
+                tag: "wheat_farm",
+                name: "Wheat Farm",
+                inputs: &[],
+                outputs: &[("wheat", 100.)],
+            },
+            Desc {
+                tag: "lumber_field",
+                name: "Lumber Field",
+                inputs: &[],
+                outputs: &[("lumber", 100.)],
+            },
+        ];
+
+        for desc in DESCS {
+            let inputs = parse_tally(&sim.good_types, desc.inputs, "good");
+            let outputs = parse_tally(&sim.good_types, desc.inputs, "good");
+            sim.building_types.insert(BuildingType {
+                tag: desc.tag,
+                name: desc.name,
+                inputs,
+                outputs,
+            });
+        }
+    }
     // Init sites
     {
         const DESCS: &[(&str, (f32, f32))] = &[("rome", (0., 0.)), ("florence", (-5., -10.))];
@@ -224,11 +380,13 @@ fn init(sim: &mut Simulation) {
             let location = sim.locations.insert(LocationData {
                 entity,
                 site: site_id,
+                buildings: Default::default(),
             });
 
             let entity = &mut sim.entities[entity];
             entity.party = Some(party);
             entity.location = Some(location);
+            sim.sites.bind_location(site_id, location);
         }
     }
 }

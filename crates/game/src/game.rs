@@ -69,15 +69,16 @@ fn populate_board(
     view: &SimView,
     selected_entity: Option<board::Handle>,
 ) {
-    let mut ids = Vec::with_capacity(view.map_items.len());
-
     board.clear();
+    let mut ids = Vec::with_capacity(view.map_items.len());
+    // Lines
     for (source, dest) in &view.map_lines {
         board.push_line(
             mq::Vec2::new(source.x, source.y),
             mq::Vec2::new(dest.x, dest.y),
         );
     }
+    // Pawns
     for item in &view.map_items {
         let handle = board::Handle(ids.len());
         ids.push(item.id);

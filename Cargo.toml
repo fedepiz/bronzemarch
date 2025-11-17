@@ -22,6 +22,7 @@ slotmap = "1"
 
 game = { path = "crates/game" }
 simulation = { path = "crates/simulation" }
+util = { path = "crates/util" }
 
 
 [dependencies]
