@@ -1,0 +1,28 @@
+[package]
+name = "bronzemarch"
+version = "0.1.0"
+edition = "2024"
+
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package.'*']
+opt-level = 3
+
+[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+egui = "0.31"
+egui-macroquad = "0.17.3"
+macroquad = "0.4.14"
+
+slotmap = "1"
+
+game = { path = "crates/game" }
+simulation = { path = "crates/simulation" }
+
+
+[dependencies]
+game = { workspace = true }
