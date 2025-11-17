@@ -7,6 +7,7 @@ pub(super) struct Board {
     font: mq::Font,
     world_unit: f32,
     strings: Vec<String>,
+    lines: Vec<Line>,
     pawns: Vec<Pawn>,
     click_boxes: Vec<ClickBox>,
 }
@@ -23,6 +24,7 @@ impl Board {
             font,
             world_unit,
             strings: vec![],
+            lines: vec![],
             pawns: vec![],
             click_boxes: vec![],
         }
@@ -34,6 +36,7 @@ impl Board {
 
     pub fn clear(&mut self) {
         self.strings.clear();
+        self.lines.clear();
         self.pawns.clear();
         self.click_boxes.clear();
 
@@ -92,6 +95,17 @@ impl Board {
         self.click_boxes.push(ClickBox { handle, bounds });
     }
 
+    pub fn push_line(&mut self, source: mq::Vec2, destination: mq::Vec2) {
+        let source = source * self.world_unit;
+        let destination = destination * self.world_unit;
+        self.lines.push(Line {
+            source,
+            destination,
+            thicknkess: 6.,
+            color: mq::GRAY.with_alpha(0.5),
+        });
+    }
+
     fn push_string(&mut self, text: &str) -> StringIdx {
         let id = StringIdx(self.strings.len());
         self.strings.push(String::default());
@@ -106,6 +120,17 @@ impl Board {
     pub fn draw(&self) {
         mq::push_camera_state();
         mq::set_camera(&self.camera);
+
+        for line in &self.lines {
+            mq::draw_line(
+                line.source.x,
+                line.source.y,
+                line.destination.x,
+                line.destination.y,
+                line.thicknkess,
+                line.color,
+            );
+        }
 
         for pawn in &self.pawns {
             fill_rect(&pawn.bounds, pawn.fill_color);
@@ -168,6 +193,13 @@ fn draw_label(board: &Board, label: &Label, bounds: &mq::Rect, font: Option<&mq:
             ..Default::default()
         },
     );
+}
+
+struct Line {
+    source: mq::Vec2,
+    destination: mq::Vec2,
+    thicknkess: f32,
+    color: mq::Color,
 }
 
 #[derive(Default)]

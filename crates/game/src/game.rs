@@ -72,6 +72,12 @@ fn populate_board(
     let mut ids = Vec::with_capacity(view.map_items.len());
 
     board.clear();
+    for (source, dest) in &view.map_lines {
+        board.push_line(
+            mq::Vec2::new(source.x, source.y),
+            mq::Vec2::new(dest.x, dest.y),
+        );
+    }
     for item in &view.map_items {
         let handle = board::Handle(ids.len());
         ids.push(item.id);
