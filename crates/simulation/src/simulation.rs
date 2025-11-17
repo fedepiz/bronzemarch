@@ -3,8 +3,14 @@ use std::collections::BTreeSet;
 use slotmap::{SlotMap, new_key_type};
 use util::tally::Tally;
 
+use crate::{
+    date::Date,
+    object::{Object, ObjectHandle, ObjectId},
+};
+
 #[derive(Default)]
 pub struct Simulation {
+    pub(crate) date: Date,
     pub(crate) sites: Sites,
     pub(crate) good_types: SlotMap<GoodId, GoodData>,
     pub(crate) building_types: SlotMap<BuildingTypeId, BuildingType>,
@@ -242,10 +248,13 @@ pub(crate) struct PartyData {
 
 #[derive(Default)]
 pub struct TickRequest {
+    pub advance_time: bool,
     pub map_viewport: Extents,
+    pub objects: Vec<ObjectId>,
 }
 
 fn init(sim: &mut Simulation) {
+    sim.date = Date::with_calendar(1, 1, 363);
     // Init goods
     {
         struct Desc<'a> {
@@ -264,6 +273,11 @@ fn init(sim: &mut Simulation) {
                 tag: "lumber",
                 name: "Lumber",
                 price: 10.,
+            },
+            Desc {
+                tag: "tools",
+                name: "Tools",
+                price: 20.,
             },
         ];
 
@@ -297,6 +311,12 @@ fn init(sim: &mut Simulation) {
                 name: "Lumber Field",
                 inputs: &[],
                 outputs: &[("lumber", 100.)],
+            },
+            Desc {
+                tag: "toolmaker",
+                name: "Toolmaker",
+                inputs: &[("lumber", 10.)],
+                outputs: &[("tools", 10.)],
             },
         ];
 
@@ -392,9 +412,18 @@ fn init(sim: &mut Simulation) {
 }
 
 fn tick(sim: &mut Simulation, request: TickRequest) -> SimView {
+    if request.advance_time {
+        sim.date.advance();
+    }
+
     let mut view = SimView::default();
     view.map_items = map_view_items(sim, request.map_viewport);
     view.map_lines = map_view_lines(sim, request.map_viewport);
+    view.objects = request
+        .objects
+        .iter()
+        .map(|&id| extract_object(sim, id))
+        .collect();
     view
 }
 
@@ -402,6 +431,14 @@ fn tick(sim: &mut Simulation, request: TickRequest) -> SimView {
 pub struct SimView {
     pub map_lines: Vec<(V2, V2)>,
     pub map_items: Vec<MapItem>,
+    pub objects: Vec<Option<Object>>,
+}
+
+pub struct MapItem {
+    pub id: ObjectId,
+    pub name: String,
+    pub pos: V2,
+    pub size: f32,
 }
 
 fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2)> {
@@ -430,8 +467,9 @@ fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem> {
         .filter(|party| viewport.contains(party.pos))
         .map(|party| {
             let entity = &sim.entities[party.entity];
+            let id = ObjectId(ObjectHandle::Entity(party.entity));
             MapItem {
-                id: party.entity,
+                id,
                 name: entity.name.clone(),
                 pos: party.pos,
                 size: party.size,
@@ -440,9 +478,29 @@ fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem> {
         .collect()
 }
 
-pub struct MapItem {
-    pub id: EntityId,
-    pub name: String,
-    pub pos: V2,
-    pub size: f32,
+fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Object> {
+    let mut obj = Object::new();
+    obj.set("id", id);
+
+    match id.0 {
+        ObjectHandle::Null => {
+            return None;
+        }
+        ObjectHandle::Global => {
+            let date = sim.date;
+            let date = format!(
+                "{}/{}/{}",
+                date.calendar_day(),
+                date.calendar_month(),
+                date.calendar_year()
+            );
+            obj.set("date", date);
+        }
+        ObjectHandle::Entity(entity) => {
+            let entity = &sim.entities[entity];
+            obj.set("name", &entity.name);
+        }
+    }
+
+    Some(obj)
 }

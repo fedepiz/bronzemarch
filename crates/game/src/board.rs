@@ -141,6 +141,21 @@ impl Board {
         mq::pop_camera_state();
     }
 
+    pub fn billboard(&self, text: &str) {
+        let font = Some(&self.font);
+        let font_size = 48;
+        let measure = mq::measure_text(text, font, font_size, 1.0);
+        let x = (mq::screen_width() - measure.width) / 2.;
+        let y = 1. * mq::screen_height() / 10.;
+        let params = mq::TextParams {
+            font,
+            font_size,
+            color: mq::WHITE,
+            ..Default::default()
+        };
+        mq::draw_text_ex(text, x, y, params);
+    }
+
     pub fn update_camera(&mut self, delta_translation: mq::Vec2, delta_zoom: f32) {
         let dt = mq::get_frame_time();
         self.camera.target += delta_translation * 200. * dt;
