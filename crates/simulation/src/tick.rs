@@ -13,6 +13,7 @@ pub struct TickRequest {
 
 pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     spawn_locations(sim, request.commands.spawn_locations.drain(..));
+    spawn_people(sim, request.commands.spawn_people.drain(..));
 
     if request.commands.init {
         test_init(sim);
@@ -81,8 +82,8 @@ fn pathfind(parties: &Parties, sites: &Sites) -> Vec<(PartyId, ChangePath)> {
                     &start_node,
                     |&site| sites.neighbours(site).iter().map(|&(s, d)| (s, metric(d))),
                     |&site| {
-                        let site_pos = sites.get(site).unwrap().pos;
-                        metric(end_v2.distance(site_pos))
+                        let site_v2 = sites.get(site).unwrap().pos;
+                        metric(end_v2.distance(site_v2))
                     },
                     |&site| site == end_node,
                 )
@@ -172,6 +173,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[derive(Default)]
 pub struct TickCommands {
     pub spawn_locations: Vec<SpawnLocation>,
+    pub spawn_people: Vec<SpawnPerson>,
     pub init: bool,
 }
 
@@ -195,6 +197,7 @@ fn test_init(sim: &mut Simulation) {
         pos,
         size: 1.,
         movement_speed: 2.5,
+        contents: PartyContents::default(),
     });
     sim.entities[entity].party = Some(party);
 }
@@ -240,6 +243,7 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
             path: Path::default(),
             size,
             movement_speed: 0.,
+            contents: PartyContents::default(),
         });
 
         let location = sim.locations.insert(LocationData {
@@ -254,3 +258,7 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
         sim.sites.bind_location(site_id, location);
     }
 }
+
+pub struct SpawnPerson {}
+
+fn spawn_people(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnPerson>) {}

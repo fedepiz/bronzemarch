@@ -15,6 +15,7 @@ pub struct Simulation {
     pub(crate) entities: Entities,
     pub(crate) locations: Locations,
     pub(crate) parties: Parties,
+    pub(crate) people: People,
     pub(crate) buildings: Buildings,
 }
 
@@ -23,6 +24,7 @@ pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
+pub(crate) type People = SlotMap<PersonId, PersonData>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -107,10 +109,12 @@ impl Tagged for BuildingType {
 new_key_type! { pub struct EntityId; }
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
+new_key_type! { pub(crate) struct PersonId; }
 
 #[derive(Default)]
 pub(crate) struct EntityData {
     pub name: String,
+    pub person: Option<PersonId>,
     pub party: Option<PartyId>,
     pub location: Option<LocationId>,
 }
@@ -375,6 +379,17 @@ pub(crate) struct PartyData {
     pub pos: V2,
     pub size: f32,
     pub movement_speed: f32,
+    pub contents: PartyContents,
+}
+
+#[derive(Default)]
+pub(crate) struct PartyContents {
+    pub people: BTreeSet<PersonId>,
+}
+
+pub(crate) struct PersonData {
+    pub entity: EntityId,
+    pub at_party: Option<PartyId>,
 }
 
 fn init(sim: &mut Simulation) {
