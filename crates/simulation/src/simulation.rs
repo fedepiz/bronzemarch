@@ -384,12 +384,13 @@ pub(crate) struct PartyData {
 
 #[derive(Default)]
 pub(crate) struct PartyContents {
+    pub leader: Option<PersonId>,
     pub people: BTreeSet<PersonId>,
 }
 
 pub(crate) struct PersonData {
     pub entity: EntityId,
-    pub at_party: Option<PartyId>,
+    pub party: Option<PartyId>,
 }
 
 fn init(sim: &mut Simulation) {

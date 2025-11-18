@@ -215,6 +215,10 @@ fn init_sim(sim: &mut Simulation) {
         kind: desc.kind,
     });
     request.commands.spawn_locations.extend(spawns);
+    request.commands.spawn_people.push(SpawnPerson {
+        name: "Federico".to_string(),
+        site: "caer_ligualid".to_string(),
+    });
     request.commands.init = true;
     sim.tick(request);
 }
