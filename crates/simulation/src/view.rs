@@ -18,15 +18,13 @@ pub struct MapItem {
 pub(crate) fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2)> {
     let mut out = Vec::with_capacity(100);
     for (id, site) in sim.sites.iter() {
-        if !viewport.contains(site.pos) {
-            continue;
-        }
+        let parent_out = !viewport.contains(site.pos);
         for neigh_id in sim.sites.greater_neighbours(id) {
             let destination = sim.sites.get(neigh_id).unwrap().pos;
-            if !viewport.contains(destination) {
-                continue;
+            let child_out = !viewport.contains(destination);
+            if !parent_out || !child_out {
+                out.push((site.pos, destination));
             }
-            out.push((site.pos, destination));
         }
     }
     out

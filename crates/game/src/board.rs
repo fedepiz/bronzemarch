@@ -31,7 +31,7 @@ impl Board {
     }
 
     pub fn screen_to_world(&self, pos: mq::Vec2) -> mq::Vec2 {
-        self.camera.screen_to_world(pos) * self.world_unit
+        self.camera.screen_to_world(pos) / self.world_unit
     }
 
     pub fn clear(&mut self) {

@@ -37,8 +37,6 @@ pub(crate) enum WindowKind {
 fn top_strip(ctx: &egui::Context, obj: &Object) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         ui.horizontal_centered(|ui| {
-            ui.label("Test test");
-            ui.separator();
             ui.label(obj.txt("date"));
         });
     });

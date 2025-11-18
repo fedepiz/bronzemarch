@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use slotmap::*;
 use util::tally::Tally;
@@ -10,16 +10,20 @@ use crate::tick::TickRequest;
 pub struct Simulation {
     pub(crate) date: Date,
     pub(crate) sites: Sites,
-    pub(crate) good_types: SlotMap<GoodId, GoodData>,
-    pub(crate) building_types: SlotMap<BuildingTypeId, BuildingType>,
-    pub(crate) entities: SlotMap<EntityId, EntityData>,
+    pub(crate) good_types: GoodTypes,
+    pub(crate) building_types: BuildingTypes,
+    pub(crate) entities: Entities,
     pub(crate) locations: Locations,
     pub(crate) parties: Parties,
-    pub(crate) buildings: SlotMap<BuildingId, BuildingData>,
+    pub(crate) buildings: Buildings,
 }
 
+pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
+pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
+pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
+pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
     pub fn new() -> Simulation {
@@ -111,20 +115,21 @@ pub(crate) struct EntityData {
     pub location: Option<LocationId>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
 pub(crate) struct SiteId(usize);
 
 #[derive(Default)]
 pub(crate) struct SiteData {
     pub tag: String,
     pub pos: V2,
-    pub neighbours: Vec<SiteId>,
+    pub neighbours: Vec<(SiteId, f32)>,
     pub location: Option<LocationId>,
 }
 
 #[derive(Default)]
 pub(crate) struct Sites {
-    pub(crate) entries: Vec<SiteData>,
+    entries: Vec<SiteData>,
+    distances: BTreeMap<(SiteId, SiteId), f32>,
 }
 
 impl Sites {
@@ -140,13 +145,14 @@ impl Sites {
     }
 
     pub fn connect(&mut self, id1: SiteId, id2: SiteId) {
-        Self::insert_no_repeat(&mut self.entries[id1.0].neighbours, id2);
-        Self::insert_no_repeat(&mut self.entries[id2.0].neighbours, id1);
+        let distance = self.entries[id1.0].pos.distance(self.entries[id2.0].pos);
+        Self::insert_no_repeat(&mut self.entries[id1.0].neighbours, id2, distance);
+        Self::insert_no_repeat(&mut self.entries[id2.0].neighbours, id1, distance);
     }
 
-    fn insert_no_repeat(vs: &mut Vec<SiteId>, id: SiteId) {
-        if !vs.contains(&id) {
-            vs.push(id);
+    fn insert_no_repeat(vs: &mut Vec<(SiteId, f32)>, id: SiteId, distance: f32) {
+        if vs.iter().all(|x| x.0 != id) {
+            vs.push((id, distance));
         }
     }
 
@@ -176,12 +182,29 @@ impl Sites {
             .map(|(idx, data)| (SiteId(idx), data))
     }
 
+    pub fn neighbours(&self, id: SiteId) -> &[(SiteId, f32)] {
+        &self.entries[id.0].neighbours
+    }
+
     pub fn greater_neighbours(&self, id: SiteId) -> impl Iterator<Item = SiteId> + use<'_> {
         self.entries
             .get(id.0)
             .into_iter()
             .flat_map(|data| data.neighbours.iter().copied())
-            .filter(move |&x| x > id)
+            .filter(move |&x| x.0 > id)
+            .map(|x| x.0)
+    }
+
+    pub fn distance(&self, id1: SiteId, id2: SiteId) -> f32 {
+        if id1 == id2 {
+            return 0.;
+        }
+        let a = id1.min(id2);
+        let b = id1.max(id2);
+        self.distances
+            .get(&(a, b))
+            .copied()
+            .unwrap_or(f32::INFINITY)
     }
 }
 
@@ -210,6 +233,10 @@ impl V2 {
 
     pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
+    }
+
+    pub fn distance(&self, other: V2) -> f32 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
     }
 }
 
@@ -256,17 +283,98 @@ pub(crate) struct LocationData {
     pub buildings: BTreeSet<BuildingId>,
 }
 
-#[derive(Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 pub(crate) enum GridCoord {
     At(SiteId),
     Between(SiteId, SiteId, f32),
 }
 
+impl GridCoord {
+    pub fn with_triple(a: SiteId, b: SiteId, t: f32) -> GridCoord {
+        if t == 0.0 {
+            Self::At(a)
+        } else if t == 1. {
+            Self::At(b)
+        } else {
+            let start = a.min(b);
+            let end = a.max(b);
+            let t = if start == a { t } else { 1. - t };
+            GridCoord::Between(start, end, t)
+        }
+    }
+
+    pub fn at(site: SiteId) -> Self {
+        Self::At(site)
+    }
+
+    pub fn between(a: SiteId, b: SiteId, t: f32) -> Self {
+        assert!(t >= 0. && t <= 1.);
+        if a == b {
+            return Self::At(a);
+        }
+        let (a, b, t) = if a < b { (a, b, t) } else { (b, a, 1. - t) };
+        Self::Between(a, b, t)
+    }
+
+    pub fn as_triple(self) -> (SiteId, SiteId, f32) {
+        match self {
+            Self::At(x) => (x, x, 0.),
+            Self::Between(a, b, t) => (a, b, t),
+        }
+    }
+
+    pub fn closest_endpoint(self) -> SiteId {
+        match self {
+            Self::At(x) => x,
+            Self::Between(a, b, t) => {
+                if t <= 0.5 {
+                    a
+                } else {
+                    b
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default, Debug)]
+pub(crate) struct Path(Vec<GridCoord>);
+
+impl Path {
+    pub fn new(mut steps: Vec<GridCoord>) -> Self {
+        steps.reverse();
+        Self(steps)
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn beginning(&self) -> Option<GridCoord> {
+        self.0.last().copied()
+    }
+
+    pub fn endpoint(&self) -> Option<GridCoord> {
+        self.0.first().copied()
+    }
+
+    pub fn advance(&mut self) {
+        self.0.pop();
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 pub(crate) struct PartyData {
     pub entity: EntityId,
-    pub grid_coord: GridCoord,
+    pub position: GridCoord,
+    pub destination: GridCoord,
+    pub path: Path,
     pub pos: V2,
     pub size: f32,
+    pub movement_speed: f32,
 }
 
 fn init(sim: &mut Simulation) {
@@ -353,7 +461,7 @@ fn init(sim: &mut Simulation) {
             ("caer_ligualid", (0., 0.)),
             ("din_drust", (-6., -9.)),
             ("anava", (7., -3.)),
-            ("llan_heledd", (6., 12.)),
+            ("llan_heledd", (1., 12.)),
         ];
         for &(tag, pos) in DESCS {
             sim.sites.define(tag, pos.into());
@@ -382,6 +490,12 @@ fn init(sim: &mut Simulation) {
                 }
             };
             sim.sites.connect(id1, id2);
+            if id1 < id2 {
+                let p1 = sim.sites.entries[id1.0].pos;
+                let p2 = sim.sites.entries[id2.0].pos;
+                let distance = p1.distance(p2);
+                sim.sites.distances.insert((id1, id2), distance);
+            }
         }
     }
 }
