@@ -55,6 +55,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
         ObjectHandle::Null => {
             return None;
         }
+
         ObjectHandle::Global => {
             let date = sim.date;
             let date = format!(
@@ -65,9 +66,28 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             );
             obj.set("date", date);
         }
+
         ObjectHandle::Entity(entity) => {
             let entity = &sim.entities[entity];
             obj.set("name", &entity.name);
+
+            if let Some(party_id) = entity.party {
+                let party = &sim.parties[party_id];
+                if let Some(leader) = party.contents.leader {
+                    let name = &sim.entities[sim.people[leader].entity].name;
+                    obj.set("leader", name);
+                }
+            }
+
+            if let Some(location) = entity.location {
+                let _ = &sim.locations[location];
+                obj.set("kind", "Location");
+            }
+
+            if let Some(person) = entity.person {
+                let _ = &sim.people[person];
+                obj.set("kind", "Person");
+            }
         }
     }
 

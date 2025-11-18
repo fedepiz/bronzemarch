@@ -93,9 +93,13 @@ impl Object {
     }
 
     pub fn txt<'a>(&'a self, tag: &str) -> &'a str {
+        self.try_text(tag).unwrap_or("INVALID")
+    }
+
+    pub fn try_text<'a>(&'a self, tag: &str) -> Option<&'a str> {
         match self.0.get(tag) {
-            Some(Value::String(str)) => str.as_str(),
-            _ => "INVALID",
+            Some(Value::String(str)) => Some(str.as_str()),
+            _ => None,
         }
     }
 

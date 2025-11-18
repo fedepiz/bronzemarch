@@ -51,13 +51,15 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
         .show(ctx, |ui| {
             ui.set_min_width(250.);
 
-            let entries = [("Name", "name")];
+            let entries = [("Name", "name"), ("Kind", "kind"), ("Leader", "leader")];
 
             egui::Grid::new("overview-gui").show(ui, |ui| {
                 for (label, field) in entries {
-                    ui.label(label);
-                    ui.label(obj.txt(field));
-                    ui.end_row();
+                    if let Some(txt) = obj.try_text(field) {
+                        ui.label(label);
+                        ui.label(txt);
+                        ui.end_row();
+                    }
                 }
             });
         });
