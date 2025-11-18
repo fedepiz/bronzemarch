@@ -1,12 +1,10 @@
 use std::collections::BTreeSet;
 
-use slotmap::{SlotMap, new_key_type};
+use slotmap::*;
 use util::tally::Tally;
 
-use crate::{
-    date::Date,
-    object::{Object, ObjectHandle, ObjectId},
-};
+use crate::date::Date;
+use crate::tick::TickRequest;
 
 #[derive(Default)]
 pub struct Simulation {
@@ -15,10 +13,13 @@ pub struct Simulation {
     pub(crate) good_types: SlotMap<GoodId, GoodData>,
     pub(crate) building_types: SlotMap<BuildingTypeId, BuildingType>,
     pub(crate) entities: SlotMap<EntityId, EntityData>,
-    pub(crate) locations: SlotMap<LocationId, LocationData>,
-    pub(crate) parties: SlotMap<PartyId, PartyData>,
+    pub(crate) locations: Locations,
+    pub(crate) parties: Parties,
     pub(crate) buildings: SlotMap<BuildingId, BuildingData>,
 }
+
+pub(crate) type Locations = SlotMap<LocationId, LocationData>;
+pub(crate) type Parties = SlotMap<PartyId, PartyData>;
 
 impl Simulation {
     pub fn new() -> Simulation {
@@ -26,8 +27,9 @@ impl Simulation {
         init(&mut sim);
         sim
     }
-    pub fn tick(&mut self, request: TickRequest) -> SimView {
-        self::tick(self, request)
+
+    pub fn tick(&mut self, request: TickRequest) -> crate::view::SimView {
+        crate::tick::tick(self, request)
     }
 }
 
@@ -102,6 +104,13 @@ new_key_type! { pub struct EntityId; }
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 
+#[derive(Default)]
+pub(crate) struct EntityData {
+    pub name: String,
+    pub party: Option<PartyId>,
+    pub location: Option<LocationId>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(crate) struct SiteId(usize);
 
@@ -115,7 +124,7 @@ pub(crate) struct SiteData {
 
 #[derive(Default)]
 pub(crate) struct Sites {
-    entries: Vec<SiteData>,
+    pub(crate) entries: Vec<SiteData>,
 }
 
 impl Sites {
@@ -159,6 +168,21 @@ impl Sites {
             site.location = Some(location);
         }
     }
+
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (SiteId, &'a SiteData)> + use<'a> {
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(idx, data)| (SiteId(idx), data))
+    }
+
+    pub fn greater_neighbours(&self, id: SiteId) -> impl Iterator<Item = SiteId> + use<'_> {
+        self.entries
+            .get(id.0)
+            .into_iter()
+            .flat_map(|data| data.neighbours.iter().copied())
+            .filter(move |&x| x > id)
+    }
 }
 
 new_key_type! { pub(crate) struct BuildingId; }
@@ -168,14 +192,6 @@ pub(crate) struct BuildingData {
     pub location: LocationId,
     pub size: i64,
 }
-
-#[derive(Default)]
-pub(crate) struct EntityData {
-    pub name: String,
-    pub party: Option<PartyId>,
-    pub location: Option<LocationId>,
-}
-
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug, Default)]
 pub struct V2 {
     pub x: f32,
@@ -225,7 +241,7 @@ impl Default for Extents {
 }
 
 impl Extents {
-    fn contains(&self, point: V2) -> bool {
+    pub(crate) fn contains(&self, point: V2) -> bool {
         point.x >= self.top_left.x
             && point.y >= self.top_left.y
             && point.x <= self.bottom_right.x
@@ -240,17 +256,17 @@ pub(crate) struct LocationData {
     pub buildings: BTreeSet<BuildingId>,
 }
 
-pub(crate) struct PartyData {
-    pub entity: EntityId,
-    pub pos: V2,
-    pub size: f32,
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+pub(crate) enum GridCoord {
+    At(SiteId),
+    Between(SiteId, SiteId, f32),
 }
 
-#[derive(Default)]
-pub struct TickRequest {
-    pub advance_time: bool,
-    pub map_viewport: Extents,
-    pub objects: Vec<ObjectId>,
+pub(crate) struct PartyData {
+    pub entity: EntityId,
+    pub grid_coord: GridCoord,
+    pub pos: V2,
+    pub size: f32,
 }
 
 fn init(sim: &mut Simulation) {
@@ -333,12 +349,22 @@ fn init(sim: &mut Simulation) {
     }
     // Init sites
     {
-        const DESCS: &[(&str, (f32, f32))] = &[("rome", (0., 0.)), ("florence", (-5., -10.))];
+        const DESCS: &[(&str, (f32, f32))] = &[
+            ("caer_ligualid", (0., 0.)),
+            ("din_drust", (-6., -9.)),
+            ("anava", (7., -3.)),
+            ("llan_heledd", (6., 12.)),
+        ];
         for &(tag, pos) in DESCS {
             sim.sites.define(tag, pos.into());
         }
 
-        const CONNECTIONS: &[(&str, &str)] = &[("rome", "florence")];
+        const CONNECTIONS: &[(&str, &str)] = &[
+            ("caer_ligualid", "anava"),
+            ("caer_ligualid", "din_drust"),
+            ("din_drust", "anava"),
+            ("caer_ligualid", "llan_heledd"),
+        ];
 
         for (tag1, tag2) in CONNECTIONS {
             let id1 = match sim.sites.lookup(&tag1) {
@@ -358,149 +384,4 @@ fn init(sim: &mut Simulation) {
             sim.sites.connect(id1, id2);
         }
     }
-
-    // Init some settlements
-    {
-        struct Desc<'a> {
-            name: &'a str,
-            site: &'a str,
-        }
-
-        let descs = [
-            Desc {
-                name: "Rome",
-                site: "rome",
-            },
-            Desc {
-                name: "Florence",
-                site: "florence",
-            },
-        ];
-
-        for desc in descs {
-            let (site_id, site_data) = match sim.sites.lookup(desc.site) {
-                Some(site) => site,
-                None => {
-                    println!("Unknown site '{}'", desc.site);
-                    continue;
-                }
-            };
-
-            let entity = sim.entities.insert(EntityData {
-                name: desc.name.to_string(),
-                ..Default::default()
-            });
-
-            let party = sim.parties.insert(PartyData {
-                entity,
-                pos: site_data.pos,
-                size: 2.,
-            });
-
-            let location = sim.locations.insert(LocationData {
-                entity,
-                site: site_id,
-                buildings: Default::default(),
-            });
-
-            let entity = &mut sim.entities[entity];
-            entity.party = Some(party);
-            entity.location = Some(location);
-            sim.sites.bind_location(site_id, location);
-        }
-    }
-}
-
-fn tick(sim: &mut Simulation, request: TickRequest) -> SimView {
-    if request.advance_time {
-        sim.date.advance();
-    }
-
-    let mut view = SimView::default();
-    view.map_items = map_view_items(sim, request.map_viewport);
-    view.map_lines = map_view_lines(sim, request.map_viewport);
-    view.objects = request
-        .objects
-        .iter()
-        .map(|&id| extract_object(sim, id))
-        .collect();
-    view
-}
-
-#[derive(Default)]
-pub struct SimView {
-    pub map_lines: Vec<(V2, V2)>,
-    pub map_items: Vec<MapItem>,
-    pub objects: Vec<Option<Object>>,
-}
-
-pub struct MapItem {
-    pub id: ObjectId,
-    pub name: String,
-    pub pos: V2,
-    pub size: f32,
-}
-
-fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2)> {
-    let mut out = Vec::with_capacity(100);
-    for (idx, site) in sim.sites.entries.iter().enumerate() {
-        if !viewport.contains(site.pos) {
-            continue;
-        }
-        for &neigh_id in &site.neighbours {
-            if neigh_id.0 >= idx {
-                continue;
-            }
-            let destination = sim.sites.get(neigh_id).unwrap().pos;
-            if !viewport.contains(destination) {
-                continue;
-            }
-            out.push((site.pos, destination));
-        }
-    }
-    out
-}
-
-fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem> {
-    sim.parties
-        .values()
-        .filter(|party| viewport.contains(party.pos))
-        .map(|party| {
-            let entity = &sim.entities[party.entity];
-            let id = ObjectId(ObjectHandle::Entity(party.entity));
-            MapItem {
-                id,
-                name: entity.name.clone(),
-                pos: party.pos,
-                size: party.size,
-            }
-        })
-        .collect()
-}
-
-fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Object> {
-    let mut obj = Object::new();
-    obj.set("id", id);
-
-    match id.0 {
-        ObjectHandle::Null => {
-            return None;
-        }
-        ObjectHandle::Global => {
-            let date = sim.date;
-            let date = format!(
-                "{}/{}/{}",
-                date.calendar_day(),
-                date.calendar_month(),
-                date.calendar_year()
-            );
-            obj.set("date", date);
-        }
-        ObjectHandle::Entity(entity) => {
-            let entity = &sim.entities[entity];
-            obj.set("name", &entity.name);
-        }
-    }
-
-    Some(obj)
 }

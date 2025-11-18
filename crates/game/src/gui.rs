@@ -48,11 +48,19 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
     let window_id = format!("object_window_{obj_idx}");
     egui::Window::new(obj.txt("name"))
         .id(window_id.into())
+        .collapsible(false)
+        .resizable(false)
         .show(ctx, |ui| {
+            ui.set_min_width(250.);
+
+            let entries = [("Name", "name")];
+
             egui::Grid::new("overview-gui").show(ui, |ui| {
-                ui.label("Name");
-                ui.label(obj.txt("name"));
-                ui.end_row();
+                for (label, field) in entries {
+                    ui.label(label);
+                    ui.label(obj.txt(field));
+                    ui.end_row();
+                }
             });
         });
 }

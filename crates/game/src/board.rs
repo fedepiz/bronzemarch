@@ -60,6 +60,7 @@ impl Board {
         name: &str,
         pos: mq::Vec2,
         size: f32,
+        font_size: u16,
         fill_color: mq::Color,
         stroke: mq::Color,
         text_color: mq::Color,
@@ -77,7 +78,7 @@ impl Board {
         let name = Label {
             text: name,
             color: text_color,
-            font_size: 20,
+            font_size,
         };
 
         let stroke = Stroke {
@@ -158,7 +159,7 @@ impl Board {
 
     pub fn update_camera(&mut self, delta_translation: mq::Vec2, delta_zoom: f32) {
         let dt = mq::get_frame_time();
-        self.camera.target += delta_translation * 200. * dt;
+        self.camera.target += delta_translation * 300. * dt;
         self.camera.zoom *= 1.0 + delta_zoom * 2. * dt;
     }
 }

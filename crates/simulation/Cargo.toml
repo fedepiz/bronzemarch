@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+float-ord = { workspace = true }
+pathfinding = { workspace = true }
 slotmap = { workspace = true }
 
 util = { workspace = true }

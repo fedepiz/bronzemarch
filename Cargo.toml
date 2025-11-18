@@ -18,6 +18,8 @@ egui = "0.31"
 egui-macroquad = "0.17.3"
 macroquad = "0.4.14"
 
+pathfinding = "4"
+float-ord = "0.3"
 slotmap = "1"
 
 game = { path = "crates/game" }

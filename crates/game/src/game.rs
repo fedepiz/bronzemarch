@@ -1,5 +1,5 @@
 use macroquad::prelude as mq;
-use simulation::{Extents, ObjectId, SimView, Simulation, V2};
+use simulation::*;
 
 use crate::{gui::WindowKind, *};
 
@@ -15,6 +15,7 @@ pub fn start() {
 
 async fn amain() {
     let mut sim = Simulation::new();
+    init_sim(&mut sim);
 
     let mut gui = gui::Gui::new();
     egui_macroquad::cfg(|ctx| gui.setup(ctx));
@@ -25,7 +26,6 @@ async fn amain() {
     let mut view = simulation::SimView::default();
     // Pre-records the kind of windows the matching requested objects are
     let mut window_kinds = vec![];
-
     let mut is_paused = true;
 
     loop {
@@ -92,10 +92,10 @@ async fn amain() {
             // Prepare next tick object requests
             window_kinds.clear();
 
-            request.objects.push(ObjectId::global());
+            request.objects_to_extract.push(ObjectId::global());
             window_kinds.push(WindowKind::TopStrip);
 
-            request.objects.extend(selected_entity);
+            request.objects_to_extract.extend(selected_entity);
             window_kinds.extend(selected_entity.map(|_| WindowKind::Entity));
         }
 
@@ -120,18 +120,30 @@ fn populate_board(board: &mut board::Board, view: &SimView, selected_entity: Opt
         ids.push(item.id);
 
         let is_selected = Some(item.id) == selected_entity;
+
+        let is_big = item.size > 1.;
+
+        let fill_color = if is_big { mq::GREEN } else { mq::SKYBLUE };
+
         let (border_color, text_color) = if is_selected {
             (mq::YELLOW, mq::YELLOW)
         } else {
             (mq::BLACK, mq::WHITE)
         };
 
+        let show_name = is_selected || is_big;
+        let name = if show_name { item.name.as_str() } else { "" };
+        let pos = mq::Vec2::new(item.pos.x, item.pos.y);
+
+        let font_size = if is_big { 24 } else { 18 };
+
         board.push_pawn(
             handle,
-            &item.name,
-            mq::Vec2::new(item.pos.x, item.pos.y),
+            name,
+            pos,
             item.size,
-            mq::GREEN,
+            font_size,
+            fill_color,
             border_color,
             text_color,
         );
@@ -164,4 +176,45 @@ fn update_camera_from_keyboard(board: &mut board::Board) {
     }
 
     board.update_camera(dtranslate, dzoom);
+}
+
+fn init_sim(sim: &mut Simulation) {
+    struct Desc<'a> {
+        name: &'a str,
+        site: &'a str,
+        kind: SettlementKind,
+    }
+
+    let descs = [
+        Desc {
+            name: "Caer Ligualid",
+            site: "caer_ligualid",
+            kind: SettlementKind::Town,
+        },
+        Desc {
+            name: "Anava",
+            site: "anava",
+            kind: SettlementKind::Village,
+        },
+        Desc {
+            name: "Din Drust",
+            site: "din_drust",
+            kind: SettlementKind::Village,
+        },
+        Desc {
+            name: "Llan Heledd",
+            site: "llan_heledd",
+            kind: SettlementKind::Village,
+        },
+    ];
+
+    let mut request = TickRequest::default();
+    let spawns = descs.into_iter().map(|desc| simulation::SpawnLocation {
+        name: desc.name.to_string(),
+        site: desc.site.to_string(),
+        kind: desc.kind,
+    });
+    request.commands.spawn_locations.extend(spawns);
+    request.commands.init = true;
+    sim.tick(request);
 }
