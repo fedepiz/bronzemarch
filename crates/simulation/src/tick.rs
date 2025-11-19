@@ -384,11 +384,13 @@ struct SpawnFaction {
 
 fn spawn_factions(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnFaction>) {
     for spawn in spawns {
-        let entity = sim.entities.insert(EntityData::default());
+        let entity = sim.entities.insert(EntityData {
+            name: spawn.name,
+            ..Default::default()
+        });
         let faction = sim.factions.insert(FactionData {
             entity,
             tag: spawn.tag,
-            name: spawn.name,
         });
         let entity = &mut sim.entities[entity];
         entity.faction = Some(faction);
@@ -432,21 +434,23 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
             path: Path::default(),
             size,
             movement_speed: 0.,
-            faction: spawn.faction,
             contents: PartyContents::default(),
         });
-
         let location = sim.locations.insert(LocationData {
             entity,
             name: spawn.name,
             site: spawn.site,
-            faction: spawn.faction,
             buildings: Default::default(),
+        });
+        let faction_member = sim.faction_members.insert(FactionMemberData {
+            entity,
+            faction: spawn.faction,
         });
 
         let entity = &mut sim.entities[entity];
         entity.party = Some(party);
         entity.location = Some(location);
+        entity.faction_membership = Some(faction_member);
 
         sim.sites.bind_location(spawn.site, location);
     }
@@ -474,11 +478,17 @@ fn spawn_people(
             entity,
             name: spawn.name.clone(),
             party: None,
+        });
+
+        let faction_membership = sim.faction_members.insert(FactionMemberData {
+            entity,
             faction: spawn.faction,
         });
+
         let entity = &mut sim.entities[entity];
         entity.name = spawn.name;
         entity.person = Some(person);
+        entity.faction_membership = Some(faction_membership);
 
         out.spawn_mobile_parties.push(SpawnMobileParty {
             name: String::default(),
@@ -530,11 +540,17 @@ fn spawn_mobile_parties(
             pos: pos_of_grid_coordinate(&sim.sites, spawn.coords),
             size: 1.,
             movement_speed: 2.5,
-            faction: spawn.faction,
             contents: PartyContents::default(),
         });
 
-        sim.entities[entity].party = Some(party);
+        let faction_membership = sim.faction_members.insert(FactionMemberData {
+            entity,
+            faction: spawn.faction,
+        });
+
+        let entity = &mut sim.entities[entity];
+        entity.party = Some(party);
+        entity.faction_membership = Some(faction_membership);
 
         if let Some(person) = spawn.leader {
             out.party_leader_changes

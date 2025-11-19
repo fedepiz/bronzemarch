@@ -113,6 +113,12 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     obj.set("leader", &sim.people[leader].name);
                 }
             }
+
+            if let Some(member_id) = entity.faction_membership {
+                let member = &sim.faction_members[member_id];
+                let name = &sim.entities[sim.factions[member.faction].entity].name;
+                obj.set("faction", name);
+            }
         }
 
         ObjectHandle::Site(_) => {

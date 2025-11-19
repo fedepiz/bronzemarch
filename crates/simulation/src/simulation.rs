@@ -17,6 +17,7 @@ pub struct Simulation {
     pub(crate) parties: Parties,
     pub(crate) people: People,
     pub(crate) factions: Factions,
+    pub(crate) faction_members: FactionMembers,
     pub(crate) buildings: Buildings,
 }
 
@@ -27,6 +28,7 @@ pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
 pub(crate) type People = SlotMap<PersonId, PersonData>;
 pub(crate) type Factions = SlotMap<FactionId, FactionData>;
+pub(crate) type FactionMembers = SlotMap<FactionMemberId, FactionMemberData>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -113,6 +115,7 @@ new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 new_key_type! { pub(crate) struct PersonId; }
 new_key_type! { pub(crate) struct FactionId; }
+new_key_type! { pub(crate) struct FactionMemberId; }
 
 #[derive(Default)]
 pub(crate) struct EntityData {
@@ -121,6 +124,7 @@ pub(crate) struct EntityData {
     pub location: Option<LocationId>,
     pub person: Option<PersonId>,
     pub faction: Option<FactionId>,
+    pub faction_membership: Option<FactionMemberId>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
@@ -305,7 +309,6 @@ pub(crate) struct LocationData {
     pub entity: EntityId,
     pub name: String,
     pub site: SiteId,
-    pub faction: FactionId,
     pub buildings: BTreeSet<BuildingId>,
 }
 
@@ -401,7 +404,6 @@ pub(crate) struct PartyData {
     pub pos: V2,
     pub size: f32,
     pub movement_speed: f32,
-    pub faction: FactionId,
     pub contents: PartyContents,
 }
 
@@ -415,13 +417,16 @@ pub(crate) struct PersonData {
     pub entity: EntityId,
     pub name: String,
     pub party: Option<PartyId>,
+}
+
+pub(crate) struct FactionMemberData {
+    pub entity: EntityId,
     pub faction: FactionId,
 }
 
 pub(crate) struct FactionData {
     pub entity: EntityId,
     pub tag: String,
-    pub name: String,
 }
 
 impl Tagged for FactionData {
