@@ -38,13 +38,20 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     }
 
     {
+        let mut spawns = Spawns::default();
+
+        let cmds = request.commands.create_entity_cmds.drain(..);
+        process_entity_create_commands(sim, cmds, &mut spawns);
+
         let mut mobile_party_spawns = vec![];
         let mut party_leader_changes = vec![];
         let mut party_name_refreshes = vec![];
 
-        spawn_locations(sim, request.commands.spawn_locations.drain(..));
+        spawn_factions(sim, spawns.factions.drain(..));
 
-        let result = spawn_people(sim, request.commands.spawn_people.drain(..));
+        spawn_locations(sim, spawns.locations.drain(..));
+
+        let result = spawn_people(sim, spawns.people.drain(..));
         mobile_party_spawns.extend(result.spawn_mobile_parties);
 
         let result = spawn_mobile_parties(sim, mobile_party_spawns.into_iter());
@@ -191,10 +198,159 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 }
 
 #[derive(Default)]
+struct CreateEntity {
+    kind: CreateEntityKind,
+    tag: String,
+    name: String,
+    site: Option<String>,
+    faction: Option<String>,
+    settlement_kind: Option<String>,
+}
+
+pub enum CreateEntityKind {
+    Nothing,
+    Location,
+    Person,
+    Faction,
+}
+
+impl Default for CreateEntityKind {
+    fn default() -> Self {
+        Self::Nothing
+    }
+}
+
+#[derive(Default)]
 pub struct TickCommands {
-    pub spawn_locations: Vec<SpawnLocation>,
-    pub spawn_people: Vec<SpawnPerson>,
+    create_entity_cmds: Vec<CreateEntity>,
     pub init: bool,
+}
+
+pub struct CreateLocationParams {
+    pub name: String,
+    pub site: String,
+    pub faction: String,
+    pub settlement_kind: String,
+}
+
+pub struct CreatePersonParams {
+    pub name: String,
+    pub site: String,
+    pub faction: String,
+}
+
+pub struct CreateFactionParams {
+    pub tag: String,
+    pub name: String,
+}
+
+impl TickCommands {
+    pub fn create_location(&mut self, params: CreateLocationParams) {
+        self.create_entity_cmds.push(CreateEntity {
+            kind: CreateEntityKind::Location,
+            name: params.name,
+            site: Some(params.site),
+            faction: Some(params.faction),
+            settlement_kind: Some(params.settlement_kind),
+            ..Default::default()
+        });
+    }
+
+    pub fn create_person(&mut self, params: CreatePersonParams) {
+        self.create_entity_cmds.push(CreateEntity {
+            kind: CreateEntityKind::Person,
+            name: params.name,
+            site: Some(params.site),
+            faction: Some(params.faction),
+            ..Default::default()
+        });
+    }
+
+    pub fn create_faction(&mut self, params: CreateFactionParams) {
+        self.create_entity_cmds.push(CreateEntity {
+            kind: CreateEntityKind::Faction,
+            tag: params.tag,
+            name: params.name,
+            ..Default::default()
+        });
+    }
+}
+
+#[derive(Default)]
+struct Spawns {
+    factions: Vec<SpawnFaction>,
+    locations: Vec<SpawnLocation>,
+    people: Vec<SpawnPerson>,
+}
+
+fn process_entity_create_commands(
+    sim: &Simulation,
+    commands: impl Iterator<Item = CreateEntity>,
+    spawns: &mut Spawns,
+) {
+    for spawn in commands {
+        let mut site = None;
+        let mut faction = None;
+        let mut settlement_kind = None;
+
+        if let Some(tag) = spawn.site.as_ref() {
+            site = match sim.sites.lookup(tag) {
+                Some((id, _)) => Some(id),
+                None => {
+                    println!("Undefined site '{tag}'");
+                    continue;
+                }
+            }
+        }
+
+        if let Some(tag) = spawn.faction.as_ref() {
+            faction = match sim.factions.lookup(tag) {
+                Some(id) => Some(id),
+                None => {
+                    println!("Undefined faction '{tag}'");
+                    continue;
+                }
+            }
+        }
+
+        if let Some(tag) = spawn.settlement_kind.as_ref() {
+            settlement_kind = match tag.as_str() {
+                "village" => Some(SettlementKind::Village),
+                "town" => Some(SettlementKind::Town),
+                _ => {
+                    println!("Undefined settlement kind '{tag}");
+                    continue;
+                }
+            }
+        };
+
+        match spawn.kind {
+            CreateEntityKind::Nothing => {
+                println!("WARNING: Spawning nothing");
+            }
+            CreateEntityKind::Location => {
+                spawns.locations.push(SpawnLocation {
+                    name: spawn.name,
+                    site: site.unwrap(),
+                    faction: faction.unwrap(),
+                    kind: settlement_kind.unwrap(),
+                });
+            }
+            CreateEntityKind::Person => {
+                spawns.people.push(SpawnPerson {
+                    name: spawn.name,
+                    site: site.unwrap(),
+                    faction: faction.unwrap(),
+                });
+            }
+            CreateEntityKind::Faction => {
+                spawns.factions.push(SpawnFaction {
+                    tag: spawn.tag,
+                    name: spawn.name,
+                });
+            }
+        }
+    }
 }
 
 fn test_init(sim: &mut Simulation) {
@@ -212,38 +368,48 @@ fn test_init(sim: &mut Simulation) {
         pos,
         size: 1.,
         movement_speed: 2.5,
+        faction: FactionId::default(),
         contents: PartyContents::default(),
     });
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum SettlementKind {
+enum SettlementKind {
     Town,
     Village,
 }
 
-pub struct SpawnLocation {
+struct SpawnFaction {
+    pub tag: String,
     pub name: String,
-    pub site: String,
+}
+
+fn spawn_factions(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnFaction>) {
+    for spawn in spawns {
+        sim.factions.insert(FactionData {
+            tag: spawn.tag,
+            name: spawn.name,
+        });
+    }
+}
+
+struct SpawnLocation {
+    pub name: String,
+    pub site: SiteId,
+    pub faction: FactionId,
     pub kind: SettlementKind,
 }
 
 fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocation>) {
     for spawn in spawns {
-        let (site_id, site_data) = match sim.sites.lookup(&spawn.site) {
-            Some(site) => site,
-            None => {
-                println!("Unknown site '{}'", spawn.site);
-                continue;
-            }
-        };
+        let site_data = &sim.sites[spawn.site];
 
         let size = match spawn.kind {
             SettlementKind::Town => 3.,
             SettlementKind::Village => 2.,
         };
 
-        let grid_coord = GridCoord::at(site_id);
+        let grid_coord = GridCoord::at(spawn.site);
         let party = sim.parties.insert(PartyData {
             name: spawn.name.clone(),
             pos: site_data.pos,
@@ -252,25 +418,28 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
             path: Path::default(),
             size,
             movement_speed: 0.,
+            faction: spawn.faction,
             contents: PartyContents::default(),
         });
 
         let location = sim.locations.insert(LocationData {
             name: spawn.name,
-            site: site_id,
+            site: spawn.site,
             party,
+            faction: spawn.faction,
             buildings: Default::default(),
         });
 
         sim.parties[party].contents.location = Some(location);
 
-        sim.sites.bind_location(site_id, location);
+        sim.sites.bind_location(spawn.site, location);
     }
 }
 
-pub struct SpawnPerson {
+struct SpawnPerson {
     pub name: String,
-    pub site: String,
+    pub site: SiteId,
+    pub faction: FactionId,
 }
 
 #[derive(Default)]
@@ -284,22 +453,16 @@ fn spawn_people(
 ) -> SpawnPeopleResult {
     let mut out = SpawnPeopleResult::default();
     for spawn in spawns {
-        let site = match sim.sites.lookup(&spawn.site) {
-            Some((id, _)) => id,
-            None => {
-                println!("Unknown site '{}'", spawn.site);
-                continue;
-            }
-        };
-
         let person = sim.people.insert(PersonData {
             name: spawn.name,
             party: None,
+            faction: spawn.faction,
         });
 
         out.spawn_mobile_parties.push(SpawnMobileParty {
-            coords: GridCoord::At(site),
+            coords: GridCoord::At(spawn.site),
             leader: Some(person),
+            faction: spawn.faction,
         });
     }
     out
@@ -308,6 +471,7 @@ fn spawn_people(
 struct SpawnMobileParty {
     coords: GridCoord,
     leader: Option<PersonId>,
+    faction: FactionId,
 }
 
 #[derive(Default)]
@@ -329,6 +493,7 @@ fn spawn_mobile_parties(
             pos: pos_of_grid_coordinate(&sim.sites, spawn.coords),
             size: 1.,
             movement_speed: 2.5,
+            faction: spawn.faction,
             contents: PartyContents::default(),
         });
 

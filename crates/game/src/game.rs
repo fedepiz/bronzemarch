@@ -188,42 +188,53 @@ fn init_sim(sim: &mut Simulation) {
     struct Desc<'a> {
         name: &'a str,
         site: &'a str,
-        kind: SettlementKind,
+        kind: &'a str,
     }
 
     let descs = [
         Desc {
             name: "Caer Ligualid",
             site: "caer_ligualid",
-            kind: SettlementKind::Town,
+            kind: "town",
         },
         Desc {
             name: "Anava",
             site: "anava",
-            kind: SettlementKind::Village,
+            kind: "village",
         },
         Desc {
             name: "Din Drust",
             site: "din_drust",
-            kind: SettlementKind::Village,
+            kind: "village",
         },
         Desc {
             name: "Llan Heledd",
             site: "llan_heledd",
-            kind: SettlementKind::Village,
+            kind: "village",
         },
     ];
 
     let mut request = TickRequest::default();
-    let spawns = descs.into_iter().map(|desc| simulation::SpawnLocation {
-        name: desc.name.to_string(),
-        site: desc.site.to_string(),
-        kind: desc.kind,
+    request.commands.create_faction(CreateFactionParams {
+        tag: "rheged".to_string(),
+        name: "Rheged".to_string(),
     });
-    request.commands.spawn_locations.extend(spawns);
-    request.commands.spawn_people.push(SpawnPerson {
+    sim.tick(request);
+
+    let mut request = TickRequest::default();
+    for desc in descs {
+        request.commands.create_location(CreateLocationParams {
+            name: desc.name.to_string(),
+            site: desc.site.to_string(),
+            settlement_kind: desc.kind.to_string(),
+            faction: "rheged".to_string(),
+        });
+    }
+
+    request.commands.create_person(CreatePersonParams {
         name: "Federico".to_string(),
         site: "caer_ligualid".to_string(),
+        faction: "rheged".to_string(),
     });
     request.commands.init = true;
     sim.tick(request);

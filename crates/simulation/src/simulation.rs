@@ -15,6 +15,7 @@ pub struct Simulation {
     pub(crate) locations: Locations,
     pub(crate) parties: Parties,
     pub(crate) people: People,
+    pub(crate) factions: Factions,
     pub(crate) buildings: Buildings,
 }
 
@@ -23,6 +24,7 @@ pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
 pub(crate) type People = SlotMap<PersonId, PersonData>;
+pub(crate) type Factions = SlotMap<FactionId, FactionData>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -37,11 +39,11 @@ impl Simulation {
     }
 }
 
-trait Tagged {
+pub(crate) trait Tagged {
     fn tag(&self) -> &str;
 }
 
-trait TaggedCollection {
+pub(crate) trait TaggedCollection {
     type Output;
 
     fn lookup(&self, tag: &str) -> Option<Self::Output>;
@@ -107,14 +109,7 @@ impl Tagged for BuildingType {
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 new_key_type! { pub(crate) struct PersonId; }
-
-#[derive(Default)]
-pub(crate) struct EntityData {
-    pub name: String,
-    pub person: Option<PersonId>,
-    pub party: Option<PartyId>,
-    pub location: Option<LocationId>,
-}
+new_key_type! { pub(crate) struct FactionId; }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
 pub(crate) struct SiteId(usize);
@@ -298,6 +293,7 @@ pub(crate) struct LocationData {
     pub name: String,
     pub site: SiteId,
     pub party: PartyId,
+    pub faction: FactionId,
     pub buildings: BTreeSet<BuildingId>,
 }
 
@@ -393,6 +389,7 @@ pub(crate) struct PartyData {
     pub pos: V2,
     pub size: f32,
     pub movement_speed: f32,
+    pub faction: FactionId,
     pub contents: PartyContents,
 }
 
@@ -406,6 +403,18 @@ pub(crate) struct PartyContents {
 pub(crate) struct PersonData {
     pub name: String,
     pub party: Option<PartyId>,
+    pub faction: FactionId,
+}
+
+pub(crate) struct FactionData {
+    pub tag: String,
+    pub name: String,
+}
+
+impl Tagged for FactionData {
+    fn tag(&self) -> &str {
+        &self.tag
+    }
 }
 
 fn init(sim: &mut Simulation) {
