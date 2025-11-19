@@ -13,6 +13,7 @@ pub struct MapItem {
     pub name: String,
     pub pos: V2,
     pub size: f32,
+    pub rank: i64,
 }
 
 pub(crate) fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2)> {
@@ -45,19 +46,32 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
                 name: String::default(),
                 pos: site.pos,
                 size: 1.,
+                rank: 0,
             })
         });
+
     let parties = sim
         .parties
         .iter()
         .filter(|(_, party)| viewport.contains(party.pos))
-        .map(|(id, party)| MapItem {
-            id: ObjectId(ObjectHandle::Party(id)),
-            name: party.name.clone(),
-            pos: party.pos,
-            size: party.size,
+        .map(|(id, party)| {
+            let rank = if party.contents.location.is_some() {
+                1
+            } else {
+                2
+            };
+            MapItem {
+                id: ObjectId(ObjectHandle::Party(id)),
+                name: party.name.clone(),
+                pos: party.pos,
+                size: party.size,
+                rank,
+            }
         });
-    sites.chain(parties).collect()
+
+    let mut items: Vec<_> = sites.chain(parties).collect();
+    items.sort_by_key(|item| item.rank);
+    items
 }
 
 pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Object> {
