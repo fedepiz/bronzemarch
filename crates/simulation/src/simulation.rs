@@ -484,7 +484,9 @@ fn init(sim: &mut Simulation) {
             ("caer_ligualid", (0., 0.)),
             ("din_drust", (-6., -9.)),
             ("anava", (7., -3.)),
-            ("llan_heledd", (1., 12.)),
+            ("llan_heledd", (3., 12.)),
+            ("caer_ligualid-din_drust", (-4., -4.)),
+            ("caer_ligualid_south", (0., 8.)),
         ];
         for &(tag, pos) in DESCS {
             sim.sites.define(tag, pos.into());
@@ -492,9 +494,11 @@ fn init(sim: &mut Simulation) {
 
         const CONNECTIONS: &[(&str, &str)] = &[
             ("caer_ligualid", "anava"),
-            ("caer_ligualid", "din_drust"),
             ("din_drust", "anava"),
-            ("caer_ligualid", "llan_heledd"),
+            ("caer_ligualid", "caer_ligualid_south"),
+            ("caer_ligualid_south", "llan_heledd"),
+            ("caer_ligualid", "caer_ligualid-din_drust"),
+            ("din_drust", "caer_ligualid-din_drust"),
         ];
 
         for (tag1, tag2) in CONNECTIONS {

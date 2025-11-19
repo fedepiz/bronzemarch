@@ -8,8 +8,15 @@ pub struct SimView {
     pub objects: Vec<Option<Object>>,
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub enum MapItemKind {
+    Site,
+    Party,
+}
+
 pub struct MapItem {
     pub id: ObjectId,
+    pub kind: MapItemKind,
     pub name: String,
     pub pos: V2,
     pub size: f32,
@@ -43,6 +50,7 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
             }
             Some(MapItem {
                 id: ObjectId(ObjectHandle::Site(site_id)),
+                kind: MapItemKind::Site,
                 name: String::default(),
                 pos: site.pos,
                 size: 1.,
@@ -62,6 +70,7 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
             };
             MapItem {
                 id: ObjectId(ObjectHandle::Party(id)),
+                kind: MapItemKind::Party,
                 name: party.name.clone(),
                 pos: party.pos,
                 size: party.size,

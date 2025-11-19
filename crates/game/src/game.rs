@@ -123,7 +123,13 @@ fn populate_board(board: &mut board::Board, view: &SimView, selected_entity: Opt
 
         let is_big = item.size > 1.;
 
-        let fill_color = if is_big { mq::GREEN } else { mq::SKYBLUE };
+        let fill_color = if item.kind == MapItemKind::Site {
+            mq::GRAY
+        } else if is_big {
+            mq::GREEN
+        } else {
+            mq::SKYBLUE
+        };
 
         let (border_color, text_color) = if is_selected {
             (mq::YELLOW, mq::YELLOW)
