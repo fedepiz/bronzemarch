@@ -12,6 +12,7 @@ pub struct Simulation {
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
     pub(crate) building_types: BuildingTypes,
+    pub(crate) entities: Entities,
     pub(crate) locations: Locations,
     pub(crate) parties: Parties,
     pub(crate) people: People,
@@ -21,6 +22,7 @@ pub struct Simulation {
 
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
+pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
 pub(crate) type People = SlotMap<PersonId, PersonData>;
@@ -106,10 +108,20 @@ impl Tagged for BuildingType {
     }
 }
 
+new_key_type! { pub(crate) struct EntityId; }
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 new_key_type! { pub(crate) struct PersonId; }
 new_key_type! { pub(crate) struct FactionId; }
+
+#[derive(Default)]
+pub(crate) struct EntityData {
+    pub name: String,
+    pub party: Option<PartyId>,
+    pub location: Option<LocationId>,
+    pub person: Option<PersonId>,
+    pub faction: Option<FactionId>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
 pub(crate) struct SiteId(usize);
@@ -290,9 +302,9 @@ impl Extents {
 
 #[derive(Default)]
 pub(crate) struct LocationData {
+    pub entity: EntityId,
     pub name: String,
     pub site: SiteId,
-    pub party: PartyId,
     pub faction: FactionId,
     pub buildings: BTreeSet<BuildingId>,
 }
@@ -382,7 +394,7 @@ impl Path {
 }
 
 pub(crate) struct PartyData {
-    pub name: String,
+    pub entity: EntityId,
     pub position: GridCoord,
     pub destination: GridCoord,
     pub path: Path,
@@ -395,18 +407,19 @@ pub(crate) struct PartyData {
 
 #[derive(Default)]
 pub(crate) struct PartyContents {
-    pub location: Option<LocationId>,
     pub leader: Option<PersonId>,
     pub people: BTreeSet<PersonId>,
 }
 
 pub(crate) struct PersonData {
+    pub entity: EntityId,
     pub name: String,
     pub party: Option<PartyId>,
     pub faction: FactionId,
 }
 
 pub(crate) struct FactionData {
+    pub entity: EntityId,
     pub tag: String,
     pub name: String,
 }

@@ -60,18 +60,18 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
 
     let parties = sim
         .parties
-        .iter()
-        .filter(|(_, party)| viewport.contains(party.pos))
-        .map(|(id, party)| {
-            let rank = if party.contents.location.is_some() {
-                1
-            } else {
-                2
-            };
+        .values()
+        .filter(|party| viewport.contains(party.pos))
+        .map(|party| {
+            let entity = &sim.entities[party.entity];
+            let rank = if entity.location.is_some() { 1 } else { 2 };
+
+            let name = sim.entities[party.entity].name.clone();
+
             MapItem {
-                id: ObjectId(ObjectHandle::Party(id)),
+                id: ObjectId(ObjectHandle::Entity(party.entity)),
                 kind: MapItemKind::Party,
-                name: party.name.clone(),
+                name,
                 pos: party.pos,
                 size: party.size,
                 rank,
@@ -103,22 +103,16 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             obj.set("date", date);
         }
 
-        ObjectHandle::Party(party_id) => {
-            let party = &sim.parties[party_id];
-            obj.set("name", &party.name);
+        ObjectHandle::Entity(entity) => {
+            let entity = &sim.entities[entity];
+            obj.set("name", &entity.name);
 
-            if let Some(leader) = party.contents.leader {
-                obj.set("leader", &sim.people[leader].name);
+            if let Some(party) = entity.party {
+                let party = &sim.parties[party];
+                if let Some(leader) = party.contents.leader {
+                    obj.set("leader", &sim.people[leader].name);
+                }
             }
-
-            let kind = if party.contents.location.is_some() {
-                "Location"
-            } else {
-                "Party"
-            };
-            obj.set("kind", kind);
-
-            obj.set("faction", &sim.factions[party.faction].name);
         }
 
         ObjectHandle::Site(_) => {
