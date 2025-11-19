@@ -12,7 +12,6 @@ pub struct Simulation {
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
     pub(crate) building_types: BuildingTypes,
-    pub(crate) entities: Entities,
     pub(crate) locations: Locations,
     pub(crate) parties: Parties,
     pub(crate) people: People,
@@ -21,7 +20,6 @@ pub struct Simulation {
 
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
-pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
 pub(crate) type People = SlotMap<PersonId, PersonData>;
@@ -106,7 +104,6 @@ impl Tagged for BuildingType {
     }
 }
 
-new_key_type! { pub struct EntityId; }
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 new_key_type! { pub(crate) struct PersonId; }
@@ -282,8 +279,9 @@ impl Extents {
 
 #[derive(Default)]
 pub(crate) struct LocationData {
-    pub entity: EntityId,
+    pub name: String,
     pub site: SiteId,
+    pub party: PartyId,
     pub buildings: BTreeSet<BuildingId>,
 }
 
@@ -372,7 +370,7 @@ impl Path {
 }
 
 pub(crate) struct PartyData {
-    pub entity: EntityId,
+    pub name: String,
     pub position: GridCoord,
     pub destination: GridCoord,
     pub path: Path,
@@ -384,12 +382,13 @@ pub(crate) struct PartyData {
 
 #[derive(Default)]
 pub(crate) struct PartyContents {
+    pub location: Option<LocationId>,
     pub leader: Option<PersonId>,
     pub people: BTreeSet<PersonId>,
 }
 
 pub(crate) struct PersonData {
-    pub entity: EntityId,
+    pub name: String,
     pub party: Option<PartyId>,
 }
 

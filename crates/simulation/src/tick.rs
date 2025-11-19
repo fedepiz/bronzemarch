@@ -1,5 +1,3 @@
-use slotmap::SecondaryMap;
-
 use crate::object::*;
 use crate::simulation::*;
 use crate::view;
@@ -196,19 +194,14 @@ pub struct TickCommands {
 }
 
 fn test_init(sim: &mut Simulation) {
-    let entity = sim.entities.insert(EntityData {
-        name: "Test".to_string(),
-        ..Default::default()
-    });
-
     let site_a = sim.sites.lookup("din_drust").unwrap().0;
     let site_b = sim.sites.lookup("llan_heledd").unwrap().0;
 
     let position = GridCoord::at(site_a);
     let destination = GridCoord::at(site_b);
     let pos = pos_of_grid_coordinate(&sim.sites, position);
-    let party = sim.parties.insert(PartyData {
-        entity,
+    sim.parties.insert(PartyData {
+        name: "Test".to_string(),
         destination,
         position,
         path: Path::default(),
@@ -217,7 +210,6 @@ fn test_init(sim: &mut Simulation) {
         movement_speed: 2.5,
         contents: PartyContents::default(),
     });
-    sim.entities[entity].party = Some(party);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -242,11 +234,6 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
             }
         };
 
-        let entity = sim.entities.insert(EntityData {
-            name: spawn.name.to_string(),
-            ..Default::default()
-        });
-
         let size = match spawn.kind {
             SettlementKind::Town => 3.,
             SettlementKind::Village => 2.,
@@ -254,7 +241,7 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
 
         let grid_coord = GridCoord::at(site_id);
         let party = sim.parties.insert(PartyData {
-            entity,
+            name: spawn.name.clone(),
             pos: site_data.pos,
             destination: grid_coord,
             position: grid_coord,
@@ -265,29 +252,15 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
         });
 
         let location = sim.locations.insert(LocationData {
-            entity,
+            name: spawn.name,
             site: site_id,
+            party,
             buildings: Default::default(),
         });
 
-        let entity = &mut sim.entities[entity];
-        entity.party = Some(party);
-        entity.location = Some(location);
+        sim.parties[party].contents.location = Some(location);
+
         sim.sites.bind_location(site_id, location);
-    }
-}
-
-pub enum PartyRef {
-    MakeNew,
-    Id(PartyId),
-}
-
-impl PartyRef {
-    fn assume_id(&self) -> Option<PartyId> {
-        match self {
-            &Self::Id(id) => Some(id),
-            _ => None,
-        }
     }
 }
 
@@ -315,15 +288,10 @@ fn spawn_people(
             }
         };
 
-        let entity = sim.entities.insert(EntityData {
-            name: spawn.name,
-            ..Default::default()
-        });
         let person = sim.people.insert(PersonData {
-            entity,
+            name: spawn.name,
             party: None,
         });
-        sim.entities[entity].person = Some(person);
 
         out.spawn_mobile_parties.push(SpawnMobileParty {
             coords: GridCoord::At(site),
@@ -349,11 +317,8 @@ fn spawn_mobile_parties(
 ) -> SpawnMobilePartiesResult {
     let mut out = SpawnMobilePartiesResult::default();
     for spawn in spawns {
-        let entity = sim.entities.insert(EntityData {
-            ..Default::default()
-        });
         let party = sim.parties.insert(PartyData {
-            entity,
+            name: String::default(),
             position: spawn.coords,
             destination: spawn.coords,
             path: Path::default(),
@@ -362,7 +327,7 @@ fn spawn_mobile_parties(
             movement_speed: 2.5,
             contents: PartyContents::default(),
         });
-        sim.entities[entity].party = Some(party);
+
         if let Some(person) = spawn.leader {
             out.party_leader_changes
                 .push(ChangePartyLeader { party, person });
@@ -404,11 +369,11 @@ fn change_party_leaders(
 
 fn refresh_party_names(sim: &mut Simulation, to_refresh: impl IntoIterator<Item = PartyId>) {
     for party_id in to_refresh {
-        let party = &sim.parties[party_id];
+        let party = &mut sim.parties[party_id];
         let mut name = String::default();
         if let Some(leader) = party.contents.leader {
-            name = sim.entities[sim.people[leader].entity].name.clone();
+            name = sim.people[leader].name.clone();
         }
-        sim.entities[party.entity].name = name;
+        party.name = name;
     }
 }

@@ -32,14 +32,13 @@ pub(crate) fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2
 
 pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem> {
     sim.parties
-        .values()
-        .filter(|party| viewport.contains(party.pos))
-        .map(|party| {
-            let entity = &sim.entities[party.entity];
-            let id = ObjectId(ObjectHandle::Entity(party.entity));
+        .iter()
+        .filter(|(_, party)| viewport.contains(party.pos))
+        .map(|(id, party)| {
+            let id = ObjectId(ObjectHandle::Party(id));
             MapItem {
                 id,
-                name: entity.name.clone(),
+                name: party.name.clone(),
                 pos: party.pos,
                 size: party.size,
             }
@@ -67,27 +66,20 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             obj.set("date", date);
         }
 
-        ObjectHandle::Entity(entity) => {
-            let entity = &sim.entities[entity];
-            obj.set("name", &entity.name);
+        ObjectHandle::Party(party_id) => {
+            let party = &sim.parties[party_id];
+            obj.set("name", &party.name);
 
-            if let Some(party_id) = entity.party {
-                let party = &sim.parties[party_id];
-                if let Some(leader) = party.contents.leader {
-                    let name = &sim.entities[sim.people[leader].entity].name;
-                    obj.set("leader", name);
-                }
+            if let Some(leader) = party.contents.leader {
+                obj.set("leader", &sim.people[leader].name);
             }
 
-            if let Some(location) = entity.location {
-                let _ = &sim.locations[location];
-                obj.set("kind", "Location");
-            }
-
-            if let Some(person) = entity.person {
-                let _ = &sim.people[person];
-                obj.set("kind", "Person");
-            }
+            let kind = if party.contents.location.is_some() {
+                "Location"
+            } else {
+                "Party"
+            };
+            obj.set("kind", kind);
         }
     }
 
