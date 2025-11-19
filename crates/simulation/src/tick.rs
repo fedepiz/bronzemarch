@@ -43,7 +43,6 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
         let cmds = request.commands.create_entity_cmds.drain(..);
         process_entity_create_commands(sim, cmds, &mut spawns);
 
-        let mut mobile_party_spawns = vec![];
         let mut party_leader_changes = vec![];
         let mut party_name_refreshes = vec![];
 
@@ -52,19 +51,15 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
         spawn_locations(sim, spawns.locations.drain(..));
 
         let result = spawn_people(sim, spawns.people.drain(..));
-        mobile_party_spawns.extend(result.spawn_mobile_parties);
+        spawns.mobile_parties.extend(result.spawn_mobile_parties);
 
-        let result = spawn_mobile_parties(sim, mobile_party_spawns.into_iter());
+        let result = spawn_mobile_parties(sim, spawns.mobile_parties.drain(..));
         party_leader_changes.extend(result.party_leader_changes);
 
         let result = change_party_leaders(sim, party_leader_changes.into_iter());
         party_name_refreshes.extend(result.refresh_party_name);
 
         self::refresh_party_names(sim, party_name_refreshes);
-    }
-
-    if request.commands.init {
-        test_init(sim);
     }
 
     let mut view = SimView::default();
@@ -207,11 +202,12 @@ struct CreateEntity {
     settlement_kind: Option<String>,
 }
 
-pub enum CreateEntityKind {
+enum CreateEntityKind {
     Nothing,
     Location,
     Person,
     Faction,
+    TestParty,
 }
 
 impl Default for CreateEntityKind {
@@ -223,7 +219,6 @@ impl Default for CreateEntityKind {
 #[derive(Default)]
 pub struct TickCommands {
     create_entity_cmds: Vec<CreateEntity>,
-    pub init: bool,
 }
 
 pub struct CreateLocationParams {
@@ -242,6 +237,11 @@ pub struct CreatePersonParams {
 pub struct CreateFactionParams {
     pub tag: String,
     pub name: String,
+}
+
+pub struct CreateTestPartyParams {
+    pub site: String,
+    pub faction: String,
 }
 
 impl TickCommands {
@@ -274,6 +274,15 @@ impl TickCommands {
             ..Default::default()
         });
     }
+
+    pub fn create_test_party(&mut self, params: CreateTestPartyParams) {
+        self.create_entity_cmds.push(CreateEntity {
+            kind: CreateEntityKind::TestParty,
+            site: Some(params.site),
+            faction: Some(params.faction),
+            ..Default::default()
+        });
+    }
 }
 
 #[derive(Default)]
@@ -281,6 +290,7 @@ struct Spawns {
     factions: Vec<SpawnFaction>,
     locations: Vec<SpawnLocation>,
     people: Vec<SpawnPerson>,
+    mobile_parties: Vec<SpawnMobileParty>,
 }
 
 fn process_entity_create_commands(
@@ -349,28 +359,16 @@ fn process_entity_create_commands(
                     name: spawn.name,
                 });
             }
+
+            CreateEntityKind::TestParty => spawns.mobile_parties.push(SpawnMobileParty {
+                name: "Test".to_string(),
+                coords: GridCoord::At(site.unwrap()),
+                leader: None,
+                faction: faction.unwrap(),
+                test: true,
+            }),
         }
     }
-}
-
-fn test_init(sim: &mut Simulation) {
-    let site_a = sim.sites.lookup("din_drust").unwrap().0;
-    let site_b = sim.sites.lookup("llan_heledd").unwrap().0;
-
-    let position = GridCoord::at(site_a);
-    let destination = GridCoord::at(site_b);
-    let pos = pos_of_grid_coordinate(&sim.sites, position);
-    sim.parties.insert(PartyData {
-        name: "Test".to_string(),
-        destination,
-        position,
-        path: Path::default(),
-        pos,
-        size: 1.,
-        movement_speed: 2.5,
-        faction: FactionId::default(),
-        contents: PartyContents::default(),
-    });
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -404,17 +402,25 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
     for spawn in spawns {
         let site_data = &sim.sites[spawn.site];
 
+        if site_data.location.is_some() {
+            println!(
+                "Site '{}' already bound to a party, cannot initialise a new location",
+                site_data.tag
+            );
+            continue;
+        }
+
         let size = match spawn.kind {
             SettlementKind::Town => 3.,
             SettlementKind::Village => 2.,
         };
 
-        let grid_coord = GridCoord::at(spawn.site);
+        let position = GridCoord::at(spawn.site);
         let party = sim.parties.insert(PartyData {
             name: spawn.name.clone(),
             pos: site_data.pos,
-            destination: grid_coord,
-            position: grid_coord,
+            position,
+            destination: position,
             path: Path::default(),
             size,
             movement_speed: 0.,
@@ -460,18 +466,22 @@ fn spawn_people(
         });
 
         out.spawn_mobile_parties.push(SpawnMobileParty {
+            name: String::default(),
             coords: GridCoord::At(spawn.site),
             leader: Some(person),
             faction: spawn.faction,
+            test: false,
         });
     }
     out
 }
 
 struct SpawnMobileParty {
+    name: String,
     coords: GridCoord,
     leader: Option<PersonId>,
     faction: FactionId,
+    test: bool,
 }
 
 #[derive(Default)]
@@ -485,10 +495,16 @@ fn spawn_mobile_parties(
 ) -> SpawnMobilePartiesResult {
     let mut out = SpawnMobilePartiesResult::default();
     for spawn in spawns {
+        let position = spawn.coords;
+        let destination = if !spawn.test {
+            position
+        } else {
+            GridCoord::at(sim.sites.lookup("llan_heledd").unwrap().0)
+        };
         let party = sim.parties.insert(PartyData {
-            name: String::default(),
-            position: spawn.coords,
-            destination: spawn.coords,
+            name: spawn.name,
+            position,
+            destination,
             path: Path::default(),
             pos: pos_of_grid_coordinate(&sim.sites, spawn.coords),
             size: 1.,

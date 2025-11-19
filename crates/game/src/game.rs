@@ -236,6 +236,9 @@ fn init_sim(sim: &mut Simulation) {
         site: "caer_ligualid".to_string(),
         faction: "rheged".to_string(),
     });
-    request.commands.init = true;
+    request.commands.create_test_party(CreateTestPartyParams {
+        site: "din_drust".to_string(),
+        faction: "rheged".to_string(),
+    });
     sim.tick(request);
 }

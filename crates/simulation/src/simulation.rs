@@ -534,7 +534,6 @@ fn init(sim: &mut Simulation) {
                 }
             };
             sim.sites.connect(id1, id2);
-            {}
         }
     }
 }
