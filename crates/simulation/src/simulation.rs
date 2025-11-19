@@ -157,6 +157,14 @@ impl Sites {
         let distance = self.entries[id1.0].pos.distance(self.entries[id2.0].pos);
         Self::insert_no_repeat(&mut self.entries[id1.0].neighbours, id2, distance);
         Self::insert_no_repeat(&mut self.entries[id2.0].neighbours, id1, distance);
+
+        // Record distance
+        let min_id = id1.min(id2);
+        let max_id = id1.max(id2);
+        let p1 = self[min_id].pos;
+        let p2 = self[max_id].pos;
+        let distance = p1.distance(p2);
+        self.distances.insert((min_id, max_id), distance);
     }
 
     fn insert_no_repeat(vs: &mut Vec<(SiteId, f32)>, id: SiteId, distance: f32) {
@@ -517,12 +525,7 @@ fn init(sim: &mut Simulation) {
                 }
             };
             sim.sites.connect(id1, id2);
-            if id1 < id2 {
-                let p1 = sim.sites.entries[id1.0].pos;
-                let p2 = sim.sites.entries[id2.0].pos;
-                let distance = p1.distance(p2);
-                sim.sites.distances.insert((id1, id2), distance);
-            }
+            {}
         }
     }
 }

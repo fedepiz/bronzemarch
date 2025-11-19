@@ -144,6 +144,9 @@ fn move_to_next_coord(parties: &Parties, sites: &Sites) -> Vec<Movement> {
                     // Get the actual distance between the two
                     let t_direction = (end_t - current_t).signum();
                     let distance = sites.distance(start, end);
+                    if distance == f32::INFINITY {
+                        println!("WARNING: Movement to infinitely far location!");
+                    }
                     // We are moving with a certain speed
                     const BASE_SPEED: f32 = 0.01;
                     let speed = party_data.movement_speed * BASE_SPEED;
@@ -153,7 +156,8 @@ fn move_to_next_coord(parties: &Parties, sites: &Sites) -> Vec<Movement> {
                         speed / distance
                     };
                     // Let's now adjust the t
-                    let next_t = (current_t + t_speed * t_direction).clamp(0., 1.);
+                    let delta_t = t_speed * t_direction;
+                    let next_t = (current_t + delta_t).clamp(0., 1.);
                     let next_pos = GridCoord::with_triple(start, end, next_t);
                     let advance_path = next_pos == destination;
                     (next_pos, advance_path)
