@@ -117,6 +117,8 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                 "Party"
             };
             obj.set("kind", kind);
+
+            obj.set("faction", &sim.factions[party.faction].name);
         }
 
         ObjectHandle::Site(_) => {

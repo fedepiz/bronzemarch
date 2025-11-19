@@ -51,7 +51,12 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
         .show(ctx, |ui| {
             ui.set_min_width(250.);
 
-            let entries = [("Name", "name"), ("Kind", "kind"), ("Leader", "leader")];
+            let entries = [
+                ("Name", "name"),
+                ("Kind", "kind"),
+                ("Leader", "leader"),
+                ("Faction", "faction"),
+            ];
 
             egui::Grid::new("overview-gui").show(ui, |ui| {
                 for (label, field) in entries {
