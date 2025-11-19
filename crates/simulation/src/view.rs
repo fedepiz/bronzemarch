@@ -31,19 +31,33 @@ pub(crate) fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2
 }
 
 pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem> {
-    sim.parties
+    let sites = sim
+        .sites
+        .iter()
+        .filter(|(_, site)| viewport.contains(site.pos))
+        .filter_map(|(site_id, site)| {
+            // Skip sites that have a location (and thus a party)
+            if site.location.is_some() {
+                return None;
+            }
+            Some(MapItem {
+                id: ObjectId(ObjectHandle::Site(site_id)),
+                name: String::default(),
+                pos: site.pos,
+                size: 1.,
+            })
+        });
+    let parties = sim
+        .parties
         .iter()
         .filter(|(_, party)| viewport.contains(party.pos))
-        .map(|(id, party)| {
-            let id = ObjectId(ObjectHandle::Party(id));
-            MapItem {
-                id,
-                name: party.name.clone(),
-                pos: party.pos,
-                size: party.size,
-            }
-        })
-        .collect()
+        .map(|(id, party)| MapItem {
+            id: ObjectId(ObjectHandle::Party(id)),
+            name: party.name.clone(),
+            pos: party.pos,
+            size: party.size,
+        });
+    sites.chain(parties).collect()
 }
 
 pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Object> {
@@ -80,6 +94,10 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                 "Party"
             };
             obj.set("kind", kind);
+        }
+
+        ObjectHandle::Site(_) => {
+            obj.set("kind", "Site");
         }
     }
 

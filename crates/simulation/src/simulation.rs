@@ -133,6 +133,14 @@ pub(crate) struct Sites {
     distances: BTreeMap<(SiteId, SiteId), f32>,
 }
 
+impl std::ops::Index<SiteId> for Sites {
+    type Output = SiteData;
+
+    fn index(&self, index: SiteId) -> &Self::Output {
+        &self.entries[index.0]
+    }
+}
+
 impl Sites {
     pub fn define(&mut self, tag: impl Into<String>, pos: V2) -> SiteId {
         let id = SiteId(self.entries.len());
