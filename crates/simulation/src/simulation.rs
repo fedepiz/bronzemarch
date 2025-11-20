@@ -12,23 +12,21 @@ pub struct Simulation {
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
     pub(crate) building_types: BuildingTypes,
-    pub(crate) entities: Entities,
     pub(crate) locations: Locations,
     pub(crate) parties: Parties,
+    pub(crate) mobile_party_ais: MobilePartyAis,
     pub(crate) people: People,
     pub(crate) factions: Factions,
-    pub(crate) faction_members: FactionMembers,
     pub(crate) buildings: Buildings,
 }
 
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
-pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
+pub(crate) type MobilePartyAis = SecondaryMap<PartyId, MobilePartyAi>;
 pub(crate) type People = SlotMap<PersonId, PersonData>;
 pub(crate) type Factions = SlotMap<FactionId, FactionData>;
-pub(crate) type FactionMembers = SlotMap<FactionMemberId, FactionMemberData>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -110,22 +108,11 @@ impl Tagged for BuildingType {
     }
 }
 
-new_key_type! { pub(crate) struct EntityId; }
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 new_key_type! { pub(crate) struct PersonId; }
 new_key_type! { pub(crate) struct FactionId; }
 new_key_type! { pub(crate) struct FactionMemberId; }
-
-#[derive(Default)]
-pub(crate) struct EntityData {
-    pub name: String,
-    pub party: Option<PartyId>,
-    pub location: Option<LocationId>,
-    pub person: Option<PersonId>,
-    pub faction: Option<FactionId>,
-    pub faction_membership: Option<FactionMemberId>,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
 pub(crate) struct SiteId(usize);
@@ -203,7 +190,9 @@ impl Sites {
         }
     }
 
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = (SiteId, &'a SiteData)> + use<'a> {
+    pub fn iter<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (SiteId, &'a SiteData)> + ExactSizeIterator + use<'a> {
         self.entries
             .iter()
             .enumerate()
@@ -306,7 +295,6 @@ impl Extents {
 
 #[derive(Default)]
 pub(crate) struct LocationData {
-    pub entity: EntityId,
     pub name: String,
     pub site: SiteId,
     pub buildings: BTreeSet<BuildingId>,
@@ -397,10 +385,8 @@ impl Path {
 }
 
 pub(crate) struct PartyData {
-    pub entity: EntityId,
+    pub name: String,
     pub position: GridCoord,
-    pub destination: GridCoord,
-    pub path: Path,
     pub pos: V2,
     pub size: f32,
     pub movement_speed: f32,
@@ -408,25 +394,27 @@ pub(crate) struct PartyData {
 }
 
 #[derive(Default)]
+pub(crate) struct MobilePartyAi {
+    pub target: Option<SiteId>,
+    pub path: Path,
+    pub destination: Option<GridCoord>,
+}
+
+#[derive(Default)]
 pub(crate) struct PartyContents {
+    pub location: Option<LocationId>,
     pub leader: Option<PersonId>,
     pub people: BTreeSet<PersonId>,
 }
 
 pub(crate) struct PersonData {
-    pub entity: EntityId,
     pub name: String,
     pub party: Option<PartyId>,
 }
 
-pub(crate) struct FactionMemberData {
-    pub entity: EntityId,
-    pub faction: FactionId,
-}
-
 pub(crate) struct FactionData {
-    pub entity: EntityId,
     pub tag: String,
+    pub name: String,
 }
 
 impl Tagged for FactionData {

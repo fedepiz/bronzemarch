@@ -20,6 +20,7 @@ macroquad = "0.4.14"
 
 pathfinding = "4"
 float-ord = "0.3"
+rand = { version = "0.8", features = ["small_rng"] }
 slotmap = "1"
 
 game = { path = "crates/game" }

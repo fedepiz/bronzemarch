@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 float-ord = { workspace = true }
 pathfinding = { workspace = true }
+rand = { workspace = true }
 slotmap = { workspace = true }
 
 util = { workspace = true }

@@ -11,6 +11,10 @@ impl Date {
     const TICKS_IN_MONTH: u64 = Self::TICKS_IN_DAY * Self::DAYS_IN_MONTH;
     const TICKS_IN_YEAR: u64 = Self::TICKS_IN_MONTH * Self::MONTHS_IN_YEAR;
 
+    pub fn epoch(self) -> u64 {
+        self.0
+    }
+
     pub fn with_calendar(day: u64, month: u64, year: u64) -> Self {
         assert!(day > 0);
         assert!(month > 0);

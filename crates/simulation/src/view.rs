@@ -60,18 +60,19 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
 
     let parties = sim
         .parties
-        .values()
-        .filter(|party| viewport.contains(party.pos))
-        .map(|party| {
-            let entity = &sim.entities[party.entity];
-            let rank = if entity.location.is_some() { 1 } else { 2 };
-
-            let name = sim.entities[party.entity].name.clone();
+        .iter()
+        .filter(|(_, party)| viewport.contains(party.pos))
+        .map(|(party_id, party)| {
+            let rank = if party.contents.location.is_some() {
+                1
+            } else {
+                2
+            };
 
             MapItem {
-                id: ObjectId(ObjectHandle::Entity(party.entity)),
+                id: ObjectId(ObjectHandle::Party(party_id)),
                 kind: MapItemKind::Party,
-                name,
+                name: party.name.clone(),
                 pos: party.pos,
                 size: party.size,
                 rank,
@@ -103,21 +104,12 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             obj.set("date", date);
         }
 
-        ObjectHandle::Entity(entity) => {
-            let entity = &sim.entities[entity];
-            obj.set("name", &entity.name);
+        ObjectHandle::Party(party_id) => {
+            let party = &sim.parties[party_id];
+            obj.set("name", &party.name);
 
-            if let Some(party) = entity.party {
-                let party = &sim.parties[party];
-                if let Some(leader) = party.contents.leader {
-                    obj.set("leader", &sim.people[leader].name);
-                }
-            }
-
-            if let Some(member_id) = entity.faction_membership {
-                let member = &sim.faction_members[member_id];
-                let name = &sim.entities[sim.factions[member.faction].entity].name;
-                obj.set("faction", name);
+            if let Some(leader) = party.contents.leader {
+                obj.set("leader", &sim.people[leader].name);
             }
         }
 
