@@ -483,10 +483,12 @@ fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocat
             size,
             movement_speed: 0.,
             contents: PartyContents::default(),
+            faction: spawn.faction,
         });
         let location = sim.locations.insert(LocationData {
             name: spawn.name,
             site: spawn.site,
+            faction: spawn.faction,
             buildings: Default::default(),
         });
         sim.parties[party].contents.location = Some(location);
@@ -515,6 +517,7 @@ fn spawn_people(
         let person = sim.people.insert(PersonData {
             name: spawn.name.clone(),
             party: None,
+            faction: spawn.faction,
         });
 
         out.spawn_mobile_parties.push(SpawnMobileParty {
@@ -553,6 +556,7 @@ fn spawn_mobile_parties(
             pos: pos_of_grid_coordinate(&sim.sites, spawn.coords),
             size: 1.,
             movement_speed: 2.5,
+            faction: spawn.faction,
             contents: PartyContents::default(),
         });
 

@@ -298,6 +298,7 @@ pub(crate) struct LocationData {
     pub name: String,
     pub site: SiteId,
     pub buildings: BTreeSet<BuildingId>,
+    pub faction: FactionId,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -391,6 +392,7 @@ pub(crate) struct PartyData {
     pub size: f32,
     pub movement_speed: f32,
     pub contents: PartyContents,
+    pub faction: FactionId,
 }
 
 #[derive(Default)]
@@ -410,6 +412,7 @@ pub(crate) struct PartyContents {
 pub(crate) struct PersonData {
     pub name: String,
     pub party: Option<PartyId>,
+    pub faction: FactionId,
 }
 
 pub(crate) struct FactionData {
