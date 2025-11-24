@@ -29,7 +29,7 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     if request.advance_time {
         sim.date.advance();
 
-        let result = navigate_moble_party_ai(sim);
+        let result = tick_party_ai(sim);
         for update in result {
             let ai = &mut sim.parties[update.id].ai;
             ai.target = update.target;
@@ -63,9 +63,6 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
 
         let cmds = request.commands.create_entity_cmds.drain(..);
         process_entity_create_commands(sim, cmds, &mut spawns);
-
-        spawn_locations(sim, spawns.locations.drain(..));
-
         spawn_parties(sim, spawns.parties.drain(..));
     }
 
@@ -93,24 +90,32 @@ struct Navigate {
     destination: Option<GridCoord>,
 }
 
-fn navigate_moble_party_ai(sim: &Simulation) -> Vec<Navigate> {
+fn tick_party_ai(sim: &Simulation) -> Vec<Navigate> {
     sim.parties
         .iter()
         .map(|(party_id, party_data)| {
-            let mut target = party_data.ai.target;
+            let mut target;
+            let destination;
 
-            if let Some(tgt) = target
-                && party_data.position == GridCoord::at(tgt)
-            {
+            if party_data.movement_speed == 0.0 {
                 target = None;
-            }
+                destination = None;
+            } else {
+                target = party_data.ai.target;
 
-            if target.is_none() {
-                let rng = &mut key_rng(sim.date, party_id);
-                target = sim.sites.iter().choose(rng).map(|x| x.0);
-            }
+                if let Some(tgt) = target
+                    && party_data.position == GridCoord::at(tgt)
+                {
+                    target = None;
+                }
 
-            let destination = target.map(|tgt| GridCoord::at(tgt));
+                if target.is_none() {
+                    let rng = &mut key_rng(sim.date, party_id);
+                    target = sim.sites.iter().choose(rng).map(|x| x.0);
+                }
+
+                destination = target.map(|tgt| GridCoord::at(tgt));
+            };
 
             Navigate {
                 id: party_id,
@@ -321,6 +326,7 @@ impl TickCommands {
 
     pub fn create_test_party(&mut self, params: CreateTestPartyParams) {
         self.create_entity_cmds.push(CreateEntity {
+            name: "Test".to_string(),
             kind: CreateEntityKind::TestParty,
             site: Some(params.site),
             faction: Some(params.faction),
@@ -331,7 +337,6 @@ impl TickCommands {
 
 #[derive(Default)]
 struct Spawns {
-    locations: Vec<SpawnLocation>,
     parties: Vec<SpawnParty>,
 }
 
@@ -343,7 +348,7 @@ fn process_entity_create_commands(
     for spawn in commands {
         let mut site = None;
         let mut faction = None;
-        let mut settlement_kind = None;
+        let mut settlement_kind = SettlementKind::Village;
 
         if let Some(tag) = spawn.site.as_ref() {
             site = match sim.sites.lookup(tag) {
@@ -367,8 +372,8 @@ fn process_entity_create_commands(
 
         if let Some(tag) = spawn.settlement_kind.as_ref() {
             settlement_kind = match tag.as_str() {
-                "village" => Some(SettlementKind::Village),
-                "town" => Some(SettlementKind::Town),
+                "village" => SettlementKind::Village,
+                "town" => SettlementKind::Town,
                 _ => {
                     println!("Undefined settlement kind '{tag}");
                     continue;
@@ -397,28 +402,55 @@ fn process_entity_create_commands(
                 println!("WARNING: Spawning nothing");
             }
             CreateEntityKind::Location => {
-                spawns.locations.push(SpawnLocation {
+                let site = site.unwrap();
+                let site_data = &sim.sites[site];
+                if site_data.location.is_some() {
+                    println!(
+                        "Site '{}' already bound to a party, cannot initialise a new location",
+                        site_data.tag
+                    );
+                    continue;
+                }
+
+                let size = match settlement_kind {
+                    SettlementKind::Town => 3.,
+                    SettlementKind::Village => 2.,
+                };
+
+                let location = sim.locations.insert(LocationData {
                     agent,
-                    site: site.unwrap(),
-                    kind: settlement_kind.unwrap(),
+                    site,
+                    buildings: Default::default(),
                 });
+
+                spawns.parties.push(SpawnParty {
+                    agent,
+                    coords: GridCoord::At(site),
+                    movement_speed: 0.,
+                    size,
+                    layer: 0,
+                    test: false,
+                });
+
+                sim.sites.bind_location(site, location);
             }
             CreateEntityKind::Person => {
                 spawns.parties.push(SpawnParty {
                     agent,
                     coords: GridCoord::At(site.unwrap()),
+                    movement_speed: 2.5,
+                    size: 1.,
                     layer: 1,
                     test: false,
                 });
             }
             CreateEntityKind::Faction => {}
             CreateEntityKind::TestParty => {
-                let agent = sim.agents.insert(AgentData {
-                    name: AgentName::fixed("Test"),
-                });
                 spawns.parties.push(SpawnParty {
                     agent,
                     coords: GridCoord::At(site.unwrap()),
+                    movement_speed: 2.5,
+                    size: 1.,
                     layer: 1,
                     test: true,
                 });
@@ -433,55 +465,11 @@ enum SettlementKind {
     Village,
 }
 
-struct SpawnLocation {
-    agent: AgentId,
-    site: SiteId,
-    kind: SettlementKind,
-}
-
-fn spawn_locations(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnLocation>) {
-    for spawn in spawns {
-        let site_data = &sim.sites[spawn.site];
-
-        if site_data.location.is_some() {
-            println!(
-                "Site '{}' already bound to a party, cannot initialise a new location",
-                site_data.tag
-            );
-            continue;
-        }
-
-        let size = match spawn.kind {
-            SettlementKind::Town => 3.,
-            SettlementKind::Village => 2.,
-        };
-
-        let agent = spawn.agent;
-
-        let location = sim.locations.insert(LocationData {
-            agent,
-            site: spawn.site,
-            buildings: Default::default(),
-        });
-
-        let position = GridCoord::at(spawn.site);
-        sim.parties.insert(PartyData {
-            agent,
-            pos: site_data.pos,
-            position,
-            size,
-            movement_speed: 0.,
-            layer: 0,
-            ai: PartyAi::default(),
-        });
-
-        sim.sites.bind_location(spawn.site, location);
-    }
-}
-
 struct SpawnParty {
     agent: AgentId,
     coords: GridCoord,
+    movement_speed: f32,
+    size: f32,
     layer: u8,
     test: bool,
 }
@@ -498,8 +486,8 @@ fn spawn_parties(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnParty>)
             agent: spawn.agent,
             position: spawn.coords,
             pos: pos_of_grid_coordinate(&sim.sites, spawn.coords),
-            size: 1.,
-            movement_speed: 2.5,
+            size: spawn.size,
+            movement_speed: spawn.movement_speed,
             layer: spawn.layer,
             ai,
         });
