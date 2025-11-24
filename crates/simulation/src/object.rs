@@ -32,6 +32,7 @@ pub(crate) enum Value {
     Id(ObjectId),
     Flag(bool),
     String(String),
+    Child(Object),
     List(Vec<Object>),
 }
 
@@ -71,6 +72,12 @@ impl<'a> From<&'a str> for Value {
     }
 }
 
+impl From<Object> for Value {
+    fn from(value: Object) -> Self {
+        Self::Child(value)
+    }
+}
+
 impl From<Vec<Object>> for Value {
     fn from(value: Vec<Object>) -> Self {
         Self::List(value)
@@ -78,8 +85,10 @@ impl From<Vec<Object>> for Value {
 }
 
 impl Object {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    const EMPTY: &'static Object = &Object::new();
+
+    pub(crate) const fn new() -> Self {
+        Self(BTreeMap::new())
     }
 
     pub(crate) fn set(&mut self, tag: impl Into<String>, value: impl Into<Value>) {
@@ -108,6 +117,17 @@ impl Object {
         match self.0.get(tag) {
             Some(Value::Flag(flag)) => *flag,
             _ => false,
+        }
+    }
+
+    pub fn child<'a>(&'a self, tag: &str) -> &'a Object {
+        self.try_child(tag).unwrap_or(Self::EMPTY)
+    }
+
+    pub fn try_child<'a>(&'a self, tag: &str) -> Option<&'a Object> {
+        match self.0.get(tag) {
+            Some(Value::Child(obj)) => Some(obj),
+            _ => None,
         }
     }
 

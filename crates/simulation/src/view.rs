@@ -20,7 +20,7 @@ pub struct MapItem {
     pub name: String,
     pub pos: V2,
     pub size: f32,
-    pub rank: i64,
+    pub layer: u8,
 }
 
 pub(crate) fn map_view_lines(sim: &Simulation, viewport: Extents) -> Vec<(V2, V2)> {
@@ -54,7 +54,7 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
                 name: String::default(),
                 pos: site.pos,
                 size: 1.,
-                rank: 0,
+                layer: 0,
             })
         });
 
@@ -63,24 +63,19 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
         .iter()
         .filter(|(_, party)| viewport.contains(party.pos))
         .map(|(party_id, party)| {
-            let rank = if party.contents.location.is_some() {
-                1
-            } else {
-                2
-            };
-
+            let name = format!("{}", sim.agents[party.agent].name);
             MapItem {
                 id: ObjectId(ObjectHandle::Party(party_id)),
                 kind: MapItemKind::Party,
-                name: party.name.clone(),
+                name,
                 pos: party.pos,
                 size: party.size,
-                rank,
+                layer: party.layer,
             }
         });
 
     let mut items: Vec<_> = sites.chain(parties).collect();
-    items.sort_by_key(|item| item.rank);
+    items.sort_by_key(|item| item.layer);
     items
 }
 
@@ -106,11 +101,8 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
 
         ObjectHandle::Party(party_id) => {
             let party = &sim.parties[party_id];
-            obj.set("name", &party.name);
-
-            if let Some(leader) = party.contents.leader {
-                obj.set("leader", &sim.people[leader].name);
-            }
+            let agent = &sim.agents[party.agent];
+            obj.set("name", agent.name.as_str());
         }
 
         ObjectHandle::Site(_) => {

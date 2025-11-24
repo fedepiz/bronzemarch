@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use slotmap::*;
+use util::arena::ArenaSafe;
+use util::hierarchy::Hierarchy;
 use util::tally::Tally;
 
 use crate::date::Date;
@@ -12,11 +14,9 @@ pub struct Simulation {
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
     pub(crate) building_types: BuildingTypes,
-    pub(crate) locations: Locations,
     pub(crate) parties: Parties,
-    pub(crate) mobile_party_ais: MobilePartyAis,
-    pub(crate) people: People,
-    pub(crate) factions: Factions,
+    pub(crate) agents: Agents,
+    pub(crate) locations: Locations,
     pub(crate) buildings: Buildings,
 }
 
@@ -24,9 +24,6 @@ pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
-pub(crate) type MobilePartyAis = SecondaryMap<PartyId, MobilePartyAi>;
-pub(crate) type People = SlotMap<PersonId, PersonData>;
-pub(crate) type Factions = SlotMap<FactionId, FactionData>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -108,11 +105,92 @@ impl Tagged for BuildingType {
     }
 }
 
+new_key_type! { pub(crate) struct AgentId; }
+impl ArenaSafe for AgentId {}
+
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
-new_key_type! { pub(crate) struct PersonId; }
-new_key_type! { pub(crate) struct FactionId; }
-new_key_type! { pub(crate) struct FactionMemberId; }
+
+pub(crate) struct Tags<T: Copy> {
+    string_to_id: HashMap<String, T>,
+}
+
+impl<T: Copy> Default for Tags<T> {
+    fn default() -> Self {
+        Self {
+            string_to_id: HashMap::default(),
+        }
+    }
+}
+
+impl<T: Copy> Tags<T> {
+    pub fn insert(&mut self, tag: impl Into<String>, id: T) {
+        self.string_to_id.insert(tag.into(), id);
+    }
+
+    pub fn remove(&mut self, tag: &str) {
+        self.string_to_id.remove(tag);
+    }
+
+    pub fn lookup(&self, tag: &str) -> Option<T> {
+        self.string_to_id.get(tag).copied()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Agents {
+    pub entries: SlotMap<AgentId, AgentData>,
+    pub tags: Tags<AgentId>,
+    pub political_hierarchy: Hierarchy<AgentId, AgentId>,
+}
+
+impl Agents {
+    pub fn insert(&mut self, data: AgentData) -> AgentId {
+        self.entries.insert(data)
+    }
+}
+
+impl std::ops::Index<AgentId> for Agents {
+    type Output = AgentData;
+
+    fn index(&self, index: AgentId) -> &Self::Output {
+        &self.entries[index]
+    }
+}
+
+impl std::ops::IndexMut<AgentId> for Agents {
+    fn index_mut(&mut self, index: AgentId) -> &mut Self::Output {
+        &mut self.entries[index]
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct AgentData {
+    pub name: AgentName,
+}
+
+#[derive(Default)]
+pub(crate) struct AgentName {
+    pub rendered: String,
+}
+
+impl AgentName {
+    pub fn fixed(name: impl Into<String>) -> Self {
+        Self {
+            rendered: name.into(),
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.rendered
+    }
+}
+
+impl std::fmt::Display for AgentName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.rendered.fmt(f)
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
 pub(crate) struct SiteId(usize);
@@ -295,10 +373,9 @@ impl Extents {
 
 #[derive(Default)]
 pub(crate) struct LocationData {
-    pub name: String,
+    pub agent: AgentId,
     pub site: SiteId,
     pub buildings: BTreeSet<BuildingId>,
-    pub faction: FactionId,
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -386,44 +463,20 @@ impl Path {
 }
 
 pub(crate) struct PartyData {
-    pub name: String,
+    pub agent: AgentId,
     pub position: GridCoord,
     pub pos: V2,
     pub size: f32,
+    pub layer: u8,
     pub movement_speed: f32,
-    pub contents: PartyContents,
-    pub faction: FactionId,
+    pub ai: PartyAi,
 }
 
 #[derive(Default)]
-pub(crate) struct MobilePartyAi {
+pub(crate) struct PartyAi {
     pub target: Option<SiteId>,
     pub path: Path,
     pub destination: Option<GridCoord>,
-}
-
-#[derive(Default)]
-pub(crate) struct PartyContents {
-    pub location: Option<LocationId>,
-    pub leader: Option<PersonId>,
-    pub people: BTreeSet<PersonId>,
-}
-
-pub(crate) struct PersonData {
-    pub name: String,
-    pub party: Option<PartyId>,
-    pub faction: FactionId,
-}
-
-pub(crate) struct FactionData {
-    pub tag: String,
-    pub name: String,
-}
-
-impl Tagged for FactionData {
-    fn tag(&self) -> &str {
-        &self.tag
-    }
 }
 
 fn init(sim: &mut Simulation) {

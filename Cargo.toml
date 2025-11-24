@@ -3,7 +3,6 @@ name = "bronzemarch"
 version = "0.1.0"
 edition = "2024"
 
-
 [profile.dev]
 opt-level = 1
 
@@ -14,6 +13,7 @@ opt-level = 3
 members = ["crates/*"]
 
 [workspace.dependencies]
+bumpalo = { version = "3", features = ["collections"] }
 egui = "0.31"
 egui-macroquad = "0.17.3"
 macroquad = "0.4.14"
