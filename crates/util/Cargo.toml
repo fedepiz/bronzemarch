@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 bumpalo = { workspace = true }
+slotmap = { workspace = true }

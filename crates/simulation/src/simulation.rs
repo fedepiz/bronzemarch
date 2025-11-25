@@ -4,6 +4,7 @@ use slotmap::*;
 use strum::EnumCount;
 use util::arena::ArenaSafe;
 use util::hierarchy::Hierarchy;
+use util::one_to_one_map::OneToOneMap;
 use util::tally::Tally;
 
 use crate::date::Date;
@@ -17,6 +18,7 @@ pub struct Simulation {
     pub(crate) building_types: BuildingTypes,
     pub(crate) parties: Parties,
     pub(crate) agents: Agents,
+    pub(crate) party_to_agent: PartyToAgent,
     pub(crate) locations: Locations,
     pub(crate) buildings: Buildings,
 }
@@ -25,6 +27,7 @@ pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
+pub(crate) type PartyToAgent = OneToOneMap<PartyId, AgentId>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {

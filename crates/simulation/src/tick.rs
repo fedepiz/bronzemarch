@@ -410,7 +410,7 @@ fn process_entity_create_commands<'a>(
             Some(())
         });
 
-        command.party.and_then(|args| {
+        let party = command.party.and_then(|args| {
             let name = match args.name {
                 CreatePartyName::FromAgent => sim.agents[agent.unwrap()].name.as_str(),
                 CreatePartyName::Fixed(str) => str,
@@ -423,7 +423,7 @@ fn process_entity_create_commands<'a>(
                     return None;
                 }
             };
-            sim.parties.insert(PartyData {
+            let id = sim.parties.insert(PartyData {
                 name,
                 position,
                 pos,
@@ -432,7 +432,11 @@ fn process_entity_create_commands<'a>(
                 movement_speed: args.movement_speed,
                 ai: PartyAi::default(),
             });
-            Some(())
+            Some(id)
         });
+
+        if let (Some(party), Some(agent)) = (party, agent) {
+            sim.party_to_agent.insert(party, agent);
+        }
     }
 }

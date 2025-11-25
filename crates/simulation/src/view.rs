@@ -100,7 +100,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             let party = &sim.parties[party_id];
             obj.set("name", &party.name);
 
-            {
+            if let Some(agent_id) = sim.party_to_agent.get_left(party_id) {
                 struct Field {
                     tag: &'static str,
                     query: RelatedAgent,
@@ -117,13 +117,13 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     },
                 ];
 
-                // for field in fields {
-                //     if let Some((_, found)) =
-                //         query_related_agent(&sim.agents, party.agent, field.query)
-                //     {
-                //         obj.set(field.tag, found.name.as_str());
-                //     }
-                // }
+                for field in fields {
+                    if let Some((_, found)) =
+                        query_related_agent(&sim.agents, agent_id, field.query)
+                    {
+                        obj.set(field.tag, found.name.as_str());
+                    }
+                }
             }
         }
 
