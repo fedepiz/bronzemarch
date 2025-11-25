@@ -4,7 +4,6 @@ use slotmap::*;
 use strum::EnumCount;
 use util::arena::ArenaSafe;
 use util::hierarchy::Hierarchy;
-use util::one_to_one_map::OneToOneMap;
 use util::tally::Tally;
 
 use crate::date::Date;
@@ -16,18 +15,26 @@ pub struct Simulation {
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
     pub(crate) building_types: BuildingTypes,
+    pub(crate) entities: Entities,
     pub(crate) parties: Parties,
     pub(crate) agents: Agents,
-    pub(crate) party_to_agent: PartyToAgent,
     pub(crate) locations: Locations,
     pub(crate) buildings: Buildings,
 }
 
+new_key_type! { pub (crate) struct EntityId; }
+impl ArenaSafe for EntityId {}
+new_key_type! { pub(crate) struct AgentId; }
+impl ArenaSafe for AgentId {}
+
+new_key_type! { pub(crate) struct LocationId; }
+new_key_type! { pub(crate) struct PartyId; }
+
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
+pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
-pub(crate) type PartyToAgent = OneToOneMap<PartyId, AgentId>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -109,12 +116,6 @@ impl Tagged for BuildingType {
     }
 }
 
-new_key_type! { pub(crate) struct AgentId; }
-impl ArenaSafe for AgentId {}
-
-new_key_type! { pub(crate) struct LocationId; }
-new_key_type! { pub(crate) struct PartyId; }
-
 pub(crate) struct Tags<T: Copy> {
     string_to_id: HashMap<String, T>,
 }
@@ -170,7 +171,7 @@ impl std::ops::IndexMut<AgentId> for Agents {
 
 #[derive(Default)]
 pub(crate) struct AgentData {
-    pub name: AgentName,
+    pub entity: EntityId,
     pub flags: AgentFlags,
 }
 
@@ -197,29 +198,6 @@ impl AgentFlags {
     pub fn get(&self, flag: AgentFlag) -> bool {
         let idx = flag as usize;
         self.0[idx]
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct AgentName {
-    pub rendered: String,
-}
-
-impl AgentName {
-    pub fn fixed(name: impl Into<String>) -> Self {
-        Self {
-            rendered: name.into(),
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.rendered
-    }
-}
-
-impl std::fmt::Display for AgentName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.rendered.fmt(f)
     }
 }
 
@@ -452,6 +430,22 @@ impl Extents {
 }
 
 #[derive(Default)]
+pub(crate) struct EntityData {
+    pub name: String,
+    pub agent: Option<AgentId>,
+    pub party: Option<PartyId>,
+}
+
+impl EntityData {
+    pub fn with_name(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct LocationData {
     pub site: SiteId,
     pub buildings: BTreeSet<BuildingId>,
@@ -542,7 +536,7 @@ impl Path {
 }
 
 pub(crate) struct PartyData {
-    pub name: String,
+    pub entity: EntityId,
     pub position: GridCoord,
     pub pos: V2,
     pub size: f32,

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{PartyId, SiteId};
+use crate::{EntityId, SiteId};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct ObjectId(pub(crate) ObjectHandle);
@@ -16,7 +16,7 @@ pub(crate) enum ObjectHandle {
     Null,
     Global,
     Site(SiteId),
-    Party(PartyId),
+    Entity(EntityId),
 }
 
 impl Default for ObjectHandle {

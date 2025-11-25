@@ -242,6 +242,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 
 #[derive(Default)]
 struct CreateEntity<'a> {
+    name: &'a str,
     agent: Option<CreateAgent<'a>>,
     location: Option<CreateLocation<'a>>,
     party: Option<CreateParty<'a>>,
@@ -249,7 +250,6 @@ struct CreateEntity<'a> {
 
 struct CreateAgent<'a> {
     tag: &'a str,
-    name: &'a str,
     flags: &'a [AgentFlag],
     political_parent: Option<&'a str>,
 }
@@ -258,13 +258,7 @@ struct CreateLocation<'a> {
     site: &'a str,
 }
 
-enum CreatePartyName<'a> {
-    FromAgent,
-    Fixed(&'a str),
-}
-
 struct CreateParty<'a> {
-    name: CreatePartyName<'a>,
     site: &'a str,
     size: f32,
     movement_speed: f32,
@@ -294,11 +288,6 @@ pub struct CreateFactionParams<'a> {
     pub name: &'a str,
 }
 
-pub struct CreateTestPartyParams<'a> {
-    pub site: &'a str,
-    pub faction: &'a str,
-}
-
 impl<'a> TickCommands<'a> {
     pub fn create_location(&mut self, params: CreateLocationParams<'a>) {
         let size = match params.settlement_kind {
@@ -307,15 +296,14 @@ impl<'a> TickCommands<'a> {
             _ => 1.,
         };
         self.create_entity_cmds.push(CreateEntity {
+            name: params.name,
             agent: Some(CreateAgent {
                 tag: "",
-                name: params.name,
                 flags: &[],
                 political_parent: Some(params.faction),
             }),
             location: Some(CreateLocation { site: params.site }),
             party: Some(CreateParty {
-                name: CreatePartyName::FromAgent,
                 site: params.site,
                 size,
                 movement_speed: 0.,
@@ -326,14 +314,13 @@ impl<'a> TickCommands<'a> {
 
     pub fn create_person(&mut self, params: CreatePersonParams<'a>) {
         self.create_entity_cmds.push(CreateEntity {
+            name: params.name,
             agent: Some(CreateAgent {
                 tag: "",
-                name: params.name,
                 flags: &[],
                 political_parent: Some(params.faction),
             }),
             party: Some(CreateParty {
-                name: CreatePartyName::FromAgent,
                 site: params.site,
                 size: 1.,
                 movement_speed: 2.5,
@@ -345,24 +332,11 @@ impl<'a> TickCommands<'a> {
 
     pub fn create_faction(&mut self, params: CreateFactionParams<'a>) {
         self.create_entity_cmds.push(CreateEntity {
+            name: params.name,
             agent: Some(CreateAgent {
                 tag: params.tag,
-                name: params.name,
                 flags: &[AgentFlag::IsFaction],
                 political_parent: None,
-            }),
-            ..Default::default()
-        });
-    }
-
-    pub fn create_test_party(&mut self, params: CreateTestPartyParams<'a>) {
-        self.create_entity_cmds.push(CreateEntity {
-            party: Some(CreateParty {
-                name: CreatePartyName::Fixed("Test"),
-                site: params.site,
-                size: 1.,
-                movement_speed: 2.5,
-                layer: 1,
             }),
             ..Default::default()
         });
@@ -374,10 +348,11 @@ fn process_entity_create_commands<'a>(
     commands: impl Iterator<Item = CreateEntity<'a>>,
 ) {
     for command in commands {
+        let entity = sim.entities.insert(EntityData::with_name(command.name));
+
         let agent = command.agent.map(|args| {
-            let name = AgentName::fixed(args.name);
             let id = sim.agents.insert(AgentData {
-                name,
+                entity,
                 flags: AgentFlags::new(args.flags),
             });
 
@@ -411,11 +386,6 @@ fn process_entity_create_commands<'a>(
         });
 
         let party = command.party.and_then(|args| {
-            let name = match args.name {
-                CreatePartyName::FromAgent => sim.agents[agent.unwrap()].name.as_str(),
-                CreatePartyName::Fixed(str) => str,
-            }
-            .to_string();
             let (position, pos) = match sim.sites.lookup(args.site) {
                 Some((id, data)) => (GridCoord::At(id), data.pos),
                 None => {
@@ -424,7 +394,7 @@ fn process_entity_create_commands<'a>(
                 }
             };
             let id = sim.parties.insert(PartyData {
-                name,
+                entity,
                 position,
                 pos,
                 size: args.size,
@@ -435,8 +405,8 @@ fn process_entity_create_commands<'a>(
             Some(id)
         });
 
-        if let (Some(party), Some(agent)) = (party, agent) {
-            sim.party_to_agent.insert(party, agent);
-        }
+        let entity = &mut sim.entities[entity];
+        entity.agent = agent;
+        entity.party = party;
     }
 }

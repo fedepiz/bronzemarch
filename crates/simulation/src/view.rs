@@ -60,15 +60,18 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
 
     let parties = sim
         .parties
-        .iter()
-        .filter(|(_, party)| viewport.contains(party.pos))
-        .map(|(party_id, party)| MapItem {
-            id: ObjectId(ObjectHandle::Party(party_id)),
-            kind: MapItemKind::Party,
-            name: party.name.clone(),
-            pos: party.pos,
-            size: party.size,
-            layer: party.layer,
+        .values()
+        .filter(|party| viewport.contains(party.pos))
+        .map(|party| {
+            let entity = &sim.entities[party.entity];
+            MapItem {
+                id: ObjectId(ObjectHandle::Entity(party.entity)),
+                kind: MapItemKind::Party,
+                name: entity.name.clone(),
+                pos: party.pos,
+                size: party.size,
+                layer: party.layer,
+            }
         });
 
     let mut items: Vec<_> = sites.chain(parties).collect();
@@ -96,11 +99,12 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             obj.set("date", date);
         }
 
-        ObjectHandle::Party(party_id) => {
-            let party = &sim.parties[party_id];
-            obj.set("name", &party.name);
+        ObjectHandle::Entity(entity_id) => {
+            let entity = &sim.entities[entity_id];
 
-            if let Some(agent_id) = sim.party_to_agent.get_left(party_id) {
+            obj.set("name", &entity.name);
+
+            if let Some(agent_id) = entity.agent {
                 struct Field {
                     tag: &'static str,
                     query: RelatedAgent,
@@ -121,7 +125,8 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     if let Some((_, found)) =
                         query_related_agent(&sim.agents, agent_id, field.query)
                     {
-                        obj.set(field.tag, found.name.as_str());
+                        let name = sim.entities[found.entity].name.as_str();
+                        obj.set(field.tag, name);
                     }
                 }
             }

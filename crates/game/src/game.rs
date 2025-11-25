@@ -236,7 +236,8 @@ fn init_sim(sim: &mut Simulation) {
         site: "caer_ligualid",
         faction: "rheged",
     });
-    request.commands.create_test_party(CreateTestPartyParams {
+    request.commands.create_person(CreatePersonParams {
+        name: "Test",
         site: "din_drust",
         faction: "rheged",
     });
