@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rand::seq::IteratorRandom;
@@ -9,8 +11,8 @@ use crate::view;
 use crate::view::*;
 
 #[derive(Default)]
-pub struct TickRequest {
-    pub commands: TickCommands,
+pub struct TickRequest<'a> {
+    pub commands: TickCommands<'a>,
     pub advance_time: bool,
     pub map_viewport: Extents,
     pub objects_to_extract: Vec<ObjectId>,
@@ -59,10 +61,8 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     }
 
     {
-        let mut spawns = Spawns::default();
         let cmds = request.commands.create_entity_cmds.drain(..);
-        process_entity_create_commands(sim, cmds, &mut spawns);
-        spawn_parties(sim, spawns.parties.drain(..));
+        process_entity_create_commands(sim, cmds);
     }
 
     let mut view = SimView::default();
@@ -241,228 +241,198 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 }
 
 #[derive(Default)]
-struct CreateEntity {
-    tag: String,
-    name: String,
-    flags: AgentFlags,
-    site: Option<String>,
-    faction: Option<String>,
-    settlement_kind: Option<String>,
-    mobile_party: bool,
-    is_test: bool,
+struct CreateEntity<'a> {
+    agent: Option<CreateAgent<'a>>,
+    location: Option<CreateLocation<'a>>,
+    party: Option<CreateParty<'a>>,
 }
 
-#[derive(Default)]
-pub struct TickCommands {
-    create_entity_cmds: Vec<CreateEntity>,
+struct CreateAgent<'a> {
+    tag: &'a str,
+    name: &'a str,
+    flags: &'a [AgentFlag],
+    political_parent: Option<&'a str>,
 }
 
-pub struct CreateLocationParams {
-    pub name: String,
-    pub site: String,
-    pub faction: String,
-    pub settlement_kind: String,
+struct CreateLocation<'a> {
+    site: &'a str,
 }
 
-pub struct CreatePersonParams {
-    pub name: String,
-    pub site: String,
-    pub faction: String,
+enum CreatePartyName<'a> {
+    FromAgent,
+    Fixed(&'a str),
 }
 
-pub struct CreateFactionParams {
-    pub tag: String,
-    pub name: String,
-}
-
-pub struct CreateTestPartyParams {
-    pub site: String,
-    pub faction: String,
-}
-
-impl TickCommands {
-    pub fn create_location(&mut self, params: CreateLocationParams) {
-        self.create_entity_cmds.push(CreateEntity {
-            name: params.name,
-            site: Some(params.site),
-            faction: Some(params.faction),
-            settlement_kind: Some(params.settlement_kind),
-            ..Default::default()
-        });
-    }
-
-    pub fn create_person(&mut self, params: CreatePersonParams) {
-        self.create_entity_cmds.push(CreateEntity {
-            name: params.name,
-            site: Some(params.site),
-            faction: Some(params.faction),
-            mobile_party: true,
-            ..Default::default()
-        });
-    }
-
-    pub fn create_faction(&mut self, params: CreateFactionParams) {
-        self.create_entity_cmds.push(CreateEntity {
-            tag: params.tag,
-            name: params.name,
-            flags: AgentFlags::new(&[AgentFlag::IsFaction]),
-            ..Default::default()
-        });
-    }
-
-    pub fn create_test_party(&mut self, params: CreateTestPartyParams) {
-        self.create_entity_cmds.push(CreateEntity {
-            name: "Test".to_string(),
-            site: Some(params.site),
-            faction: Some(params.faction),
-            mobile_party: true,
-            is_test: false,
-            ..Default::default()
-        });
-    }
-}
-
-#[derive(Default)]
-struct Spawns {
-    parties: Vec<SpawnParty>,
-}
-
-fn process_entity_create_commands(
-    sim: &mut Simulation,
-    commands: impl Iterator<Item = CreateEntity>,
-    spawns: &mut Spawns,
-) {
-    for spawn in commands {
-        let mut site = None;
-        let mut faction = None;
-
-        if let Some(tag) = spawn.site.as_ref() {
-            site = match sim.sites.lookup(tag) {
-                Some((id, _)) => Some(id),
-                None => {
-                    println!("Undefined site '{tag}'");
-                    continue;
-                }
-            }
-        }
-
-        if let Some(tag) = spawn.faction.as_ref() {
-            faction = match sim.agents.tags.lookup(tag) {
-                Some(id) => Some(id),
-                None => {
-                    println!("Undefined faction '{tag}'");
-                    continue;
-                }
-            }
-        }
-
-        let agent = {
-            let name = AgentName::fixed(spawn.name);
-            sim.agents.insert(AgentData {
-                name,
-                flags: spawn.flags,
-                ..Default::default()
-            })
-        };
-
-        if !spawn.tag.is_empty() {
-            sim.agents.tags.insert(spawn.tag, agent);
-        }
-
-        if let Some(faction) = faction {
-            sim.agents.political_hierarchy.insert(faction, agent);
-        }
-
-        let mut spawn_party = None;
-
-        if let Some(tag) = spawn.settlement_kind.as_ref() {
-            let kind = match tag.as_str() {
-                "village" => SettlementKind::Village,
-                "town" => SettlementKind::Town,
-                _ => {
-                    println!("Undefined settlement kind '{tag}");
-                    continue;
-                }
-            };
-            let site = site.unwrap();
-            let site_data = &sim.sites[site];
-            if site_data.location.is_some() {
-                println!(
-                    "Site '{}' already bound to a party, cannot initialise a new location",
-                    site_data.tag
-                );
-                continue;
-            }
-
-            let size = match kind {
-                SettlementKind::Town => 3.,
-                SettlementKind::Village => 2.,
-            };
-
-            let location = sim.locations.insert(LocationData {
-                agent,
-                site,
-                buildings: Default::default(),
-            });
-
-            sim.sites.bind_location(site, location);
-
-            spawn_party = Some(SpawnParty {
-                agent,
-                coords: GridCoord::At(site),
-                movement_speed: 0.,
-                size,
-                layer: 0,
-                test: false,
-            })
-        };
-
-        if spawn.mobile_party {
-            spawns.parties.push(SpawnParty {
-                agent,
-                coords: GridCoord::At(site.unwrap()),
-                movement_speed: 2.5,
-                size: 1.,
-                layer: 1,
-                test: spawn.is_test,
-            });
-        }
-
-        spawns.parties.extend(spawn_party);
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum SettlementKind {
-    Town,
-    Village,
-}
-
-struct SpawnParty {
-    agent: AgentId,
-    coords: GridCoord,
-    movement_speed: f32,
+struct CreateParty<'a> {
+    name: CreatePartyName<'a>,
+    site: &'a str,
     size: f32,
+    movement_speed: f32,
     layer: u8,
-    test: bool,
 }
 
-fn spawn_parties(sim: &mut Simulation, spawns: impl Iterator<Item = SpawnParty>) {
-    for spawn in spawns {
-        let mut ai = PartyAi::default();
-        if spawn.test {
-            let target = sim.sites.lookup("llan_heledd").unwrap().0;
-            ai.target = Some(target);
-        }
+#[derive(Default)]
+pub struct TickCommands<'a> {
+    create_entity_cmds: Vec<CreateEntity<'a>>,
+}
 
-        sim.parties.insert(PartyData {
-            agent: spawn.agent,
-            position: spawn.coords,
-            pos: pos_of_grid_coordinate(&sim.sites, spawn.coords),
-            size: spawn.size,
-            movement_speed: spawn.movement_speed,
-            layer: spawn.layer,
-            ai,
+pub struct CreateLocationParams<'a> {
+    pub name: &'a str,
+    pub site: &'a str,
+    pub faction: &'a str,
+    pub settlement_kind: &'a str,
+}
+
+pub struct CreatePersonParams<'a> {
+    pub name: &'a str,
+    pub site: &'a str,
+    pub faction: &'a str,
+}
+
+pub struct CreateFactionParams<'a> {
+    pub tag: &'a str,
+    pub name: &'a str,
+}
+
+pub struct CreateTestPartyParams<'a> {
+    pub site: &'a str,
+    pub faction: &'a str,
+}
+
+impl<'a> TickCommands<'a> {
+    pub fn create_location(&mut self, params: CreateLocationParams<'a>) {
+        let size = match params.settlement_kind {
+            "town" => 2.5,
+            "village" => 2.,
+            _ => 1.,
+        };
+        self.create_entity_cmds.push(CreateEntity {
+            agent: Some(CreateAgent {
+                tag: "",
+                name: params.name,
+                flags: &[],
+                political_parent: Some(params.faction),
+            }),
+            location: Some(CreateLocation { site: params.site }),
+            party: Some(CreateParty {
+                name: CreatePartyName::FromAgent,
+                site: params.site,
+                size,
+                movement_speed: 0.,
+                layer: 0,
+            }),
+        });
+    }
+
+    pub fn create_person(&mut self, params: CreatePersonParams<'a>) {
+        self.create_entity_cmds.push(CreateEntity {
+            agent: Some(CreateAgent {
+                tag: "",
+                name: params.name,
+                flags: &[],
+                political_parent: Some(params.faction),
+            }),
+            party: Some(CreateParty {
+                name: CreatePartyName::FromAgent,
+                site: params.site,
+                size: 1.,
+                movement_speed: 2.5,
+                layer: 1,
+            }),
+            ..Default::default()
+        });
+    }
+
+    pub fn create_faction(&mut self, params: CreateFactionParams<'a>) {
+        self.create_entity_cmds.push(CreateEntity {
+            agent: Some(CreateAgent {
+                tag: params.tag,
+                name: params.name,
+                flags: &[AgentFlag::IsFaction],
+                political_parent: None,
+            }),
+            ..Default::default()
+        });
+    }
+
+    pub fn create_test_party(&mut self, params: CreateTestPartyParams<'a>) {
+        self.create_entity_cmds.push(CreateEntity {
+            party: Some(CreateParty {
+                name: CreatePartyName::Fixed("Test"),
+                site: params.site,
+                size: 1.,
+                movement_speed: 2.5,
+                layer: 1,
+            }),
+            ..Default::default()
+        });
+    }
+}
+
+fn process_entity_create_commands<'a>(
+    sim: &mut Simulation,
+    commands: impl Iterator<Item = CreateEntity<'a>>,
+) {
+    for command in commands {
+        let agent = command.agent.map(|args| {
+            let name = AgentName::fixed(args.name);
+            let id = sim.agents.insert(AgentData {
+                name,
+                flags: AgentFlags::new(args.flags),
+            });
+
+            if !args.tag.is_empty() {
+                sim.agents.tags.insert(args.tag, id);
+            }
+
+            if let Some(parent) = args.political_parent {
+                match sim.agents.tags.lookup(parent) {
+                    Some(parent) => sim.agents.political_hierarchy.insert(parent, id),
+                    None => println!("Unknown agent with tag '{parent}'"),
+                }
+            }
+            id
+        });
+
+        command.location.and_then(|args| {
+            let site = match sim.sites.lookup(args.site) {
+                Some((id, _)) => id,
+                None => {
+                    println!("Undefined site '{}'", args.site);
+                    return None;
+                }
+            };
+            let location = sim.locations.insert(LocationData {
+                site,
+                buildings: BTreeSet::default(),
+            });
+            sim.sites.bind_location(site, location);
+            Some(())
+        });
+
+        command.party.and_then(|args| {
+            let name = match args.name {
+                CreatePartyName::FromAgent => sim.agents[agent.unwrap()].name.as_str(),
+                CreatePartyName::Fixed(str) => str,
+            }
+            .to_string();
+            let (position, pos) = match sim.sites.lookup(args.site) {
+                Some((id, data)) => (GridCoord::At(id), data.pos),
+                None => {
+                    println!("Undefined site '{}'", args.site);
+                    return None;
+                }
+            };
+            sim.parties.insert(PartyData {
+                name,
+                position,
+                pos,
+                size: args.size,
+                layer: args.layer,
+                movement_speed: args.movement_speed,
+                ai: PartyAi::default(),
+            });
+            Some(())
         });
     }
 }

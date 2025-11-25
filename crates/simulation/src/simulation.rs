@@ -450,7 +450,6 @@ impl Extents {
 
 #[derive(Default)]
 pub(crate) struct LocationData {
-    pub agent: AgentId,
     pub site: SiteId,
     pub buildings: BTreeSet<BuildingId>,
 }
@@ -540,7 +539,7 @@ impl Path {
 }
 
 pub(crate) struct PartyData {
-    pub agent: AgentId,
+    pub name: String,
     pub position: GridCoord,
     pub pos: V2,
     pub size: f32,

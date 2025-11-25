@@ -15,6 +15,10 @@ impl Arena {
         vec.extend(iter);
         vec.into_bump_slice_mut()
     }
+
+    pub fn reset(&mut self) {
+        self.0.reset();
+    }
 }
 
 pub trait ArenaSafe {}

@@ -427,6 +427,7 @@ dependencies = [
  "egui-macroquad",
  "macroquad",
  "simulation",
+ "util",
 ]
 
 [[package]]

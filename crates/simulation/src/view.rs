@@ -62,16 +62,13 @@ pub(crate) fn map_view_items(sim: &Simulation, viewport: Extents) -> Vec<MapItem
         .parties
         .iter()
         .filter(|(_, party)| viewport.contains(party.pos))
-        .map(|(party_id, party)| {
-            let name = format!("{}", sim.agents[party.agent].name);
-            MapItem {
-                id: ObjectId(ObjectHandle::Party(party_id)),
-                kind: MapItemKind::Party,
-                name,
-                pos: party.pos,
-                size: party.size,
-                layer: party.layer,
-            }
+        .map(|(party_id, party)| MapItem {
+            id: ObjectId(ObjectHandle::Party(party_id)),
+            kind: MapItemKind::Party,
+            name: party.name.clone(),
+            pos: party.pos,
+            size: party.size,
+            layer: party.layer,
         });
 
     let mut items: Vec<_> = sites.chain(parties).collect();
@@ -101,8 +98,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
 
         ObjectHandle::Party(party_id) => {
             let party = &sim.parties[party_id];
-            let agent_data = &sim.agents[party.agent];
-            obj.set("name", agent_data.name.as_str());
+            obj.set("name", &party.name);
 
             {
                 struct Field {
@@ -121,13 +117,13 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     },
                 ];
 
-                for field in fields {
-                    if let Some((_, found)) =
-                        query_related_agent(&sim.agents, party.agent, field.query)
-                    {
-                        obj.set(field.tag, found.name.as_str());
-                    }
-                }
+                // for field in fields {
+                //     if let Some((_, found)) =
+                //         query_related_agent(&sim.agents, party.agent, field.query)
+                //     {
+                //         obj.set(field.tag, found.name.as_str());
+                //     }
+                // }
             }
         }
 

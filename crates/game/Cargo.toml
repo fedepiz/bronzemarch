@@ -9,3 +9,4 @@ egui = { workspace = true }
 egui-macroquad = { workspace = true }
 
 simulation = { workspace = true }
+util = { workspace = true }

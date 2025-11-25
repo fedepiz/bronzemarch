@@ -216,29 +216,29 @@ fn init_sim(sim: &mut Simulation) {
 
     let mut request = TickRequest::default();
     request.commands.create_faction(CreateFactionParams {
-        tag: "rheged".to_string(),
-        name: "Rheged".to_string(),
+        tag: "rheged",
+        name: "Rheged",
     });
     sim.tick(request);
 
     let mut request = TickRequest::default();
     for desc in descs {
         request.commands.create_location(CreateLocationParams {
-            name: desc.name.to_string(),
-            site: desc.site.to_string(),
-            settlement_kind: desc.kind.to_string(),
-            faction: "rheged".to_string(),
+            name: desc.name,
+            site: desc.site,
+            settlement_kind: desc.kind,
+            faction: "rheged",
         });
     }
 
     request.commands.create_person(CreatePersonParams {
-        name: "Federico".to_string(),
-        site: "caer_ligualid".to_string(),
-        faction: "rheged".to_string(),
+        name: "Federico",
+        site: "caer_ligualid",
+        faction: "rheged",
     });
     request.commands.create_test_party(CreateTestPartyParams {
-        site: "din_drust".to_string(),
-        faction: "rheged".to_string(),
+        site: "din_drust",
+        faction: "rheged",
     });
     sim.tick(request);
 }
