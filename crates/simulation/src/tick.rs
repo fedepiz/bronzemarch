@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use rand::seq::IteratorRandom;
 
 use crate::date::Date;
 use crate::object::*;
@@ -31,20 +30,33 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     if request.advance_time {
         sim.date.advance();
 
+        if let Some((subject, target)) = request.commands.move_to {
+            apply_move_to(sim, subject, target);
+        }
+
         let result = tick_party_ai(sim);
         for update in result {
-            let ai = &mut sim.parties[update.id].ai;
-            ai.target = update.target;
-            ai.destination = update.destination;
+            let movement = &mut sim.parties[update.id].movement;
+            movement.target = update.target;
+            movement.destination = update.destination;
         }
 
         // Pathfinding
         for (id, update) in pathfind(&sim.parties, &sim.sites) {
-            let ai_data = &mut sim.parties[id].ai;
+            let party = &mut sim.parties[id];
             match update {
                 ChangePath::Keep => {}
-                ChangePath::Clear => ai_data.path.clear(),
-                ChangePath::Set(steps) => ai_data.path = Path::new(steps),
+                ChangePath::Clear => party.movement.path.clear(),
+                ChangePath::Set(steps) => {
+                    party.movement.path = Path::new(steps);
+                }
+            }
+        }
+
+        for party in sim.parties.values_mut() {
+            let path = &mut party.movement.path;
+            while path.beginning() == Some(party.position) {
+                path.advance();
             }
         }
 
@@ -53,9 +65,6 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
         for movement in movements {
             let party = &mut sim.parties[movement.party_id];
             party.position = movement.next_position;
-            if movement.advance_path {
-                party.ai.path.advance();
-            }
             party.pos = pos_of_grid_coordinate(&sim.sites, party.position);
         }
     }
@@ -76,6 +85,26 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     view
 }
 
+fn apply_move_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId) {
+    let subject = match subject.0 {
+        ObjectHandle::Entity(id) => match sim.entities[id].party {
+            Some(x) => x,
+            None => return,
+        },
+        _ => return,
+    };
+    let target = match target.0 {
+        ObjectHandle::Site(site) => Some(MovementTarget::Site(site)),
+        ObjectHandle::Entity(entity) => sim
+            .entities
+            .get(entity)
+            .and_then(|e| e.party)
+            .map(MovementTarget::Party),
+        _ => None,
+    };
+    sim.parties[subject].movement.target = target;
+}
+
 enum ChangePath {
     Clear,
     Keep,
@@ -85,7 +114,7 @@ enum ChangePath {
 #[derive(Default)]
 struct Navigate {
     id: PartyId,
-    target: Option<SiteId>,
+    target: Option<MovementTarget>,
     destination: Option<GridCoord>,
 }
 
@@ -93,27 +122,18 @@ fn tick_party_ai(sim: &Simulation) -> Vec<Navigate> {
     sim.parties
         .iter()
         .map(|(party_id, party_data)| {
-            let mut target;
+            let target;
             let destination;
 
             if party_data.movement_speed == 0.0 {
                 target = None;
                 destination = None;
             } else {
-                target = party_data.ai.target;
-
-                if let Some(tgt) = target
-                    && party_data.position == GridCoord::at(tgt)
-                {
-                    target = None;
-                }
-
-                if target.is_none() {
-                    let rng = &mut key_rng(sim.date, party_id);
-                    target = sim.sites.iter().choose(rng).map(|x| x.0);
-                }
-
-                destination = target.map(|tgt| GridCoord::at(tgt));
+                target = party_data.movement.target;
+                destination = target.map(|tgt| match tgt {
+                    MovementTarget::Site(site) => GridCoord::at(site),
+                    MovementTarget::Party(party) => sim.parties[party].position,
+                });
             };
 
             Navigate {
@@ -129,36 +149,55 @@ fn pathfind(parties: &Parties, sites: &Sites) -> Vec<(PartyId, ChangePath)> {
     parties
         .iter()
         .map(|(party_id, party_data)| {
-            let destination = party_data.ai.destination.unwrap_or(party_data.position);
+            let destination = party_data
+                .movement
+                .destination
+                .unwrap_or(party_data.position);
             let update = if party_data.position == destination {
                 ChangePath::Clear
-            } else if Some(destination) == party_data.ai.path.endpoint() {
+            } else if Some(destination) == party_data.movement.path.endpoint() {
                 ChangePath::Keep
             } else {
-                let start_node = party_data.position.closest_endpoint();
-                let end_node = destination.closest_endpoint();
-                let end_v2 = sites.get(end_node).unwrap().pos;
+                let current_pos = party_data.position;
+                let path = if current_pos.is_colinear(destination) {
+                    vec![destination]
+                } else {
+                    let start_node = current_pos.closest_endpoint();
+                    let end_node = destination.closest_endpoint();
+                    let end_v2 = sites.get(end_node).unwrap().pos;
 
-                fn metric(x: f32) -> i64 {
-                    (x * 1000.).round() as i64
-                }
+                    fn metric(x: f32) -> i64 {
+                        (x * 1000.).round() as i64
+                    }
 
-                let steps = pathfinding::directed::astar::astar(
-                    &start_node,
-                    |&site| sites.neighbours(site).iter().map(|&(s, d)| (s, metric(d))),
-                    |&site| {
-                        let site_v2 = sites.get(site).unwrap().pos;
-                        metric(end_v2.distance(site_v2))
-                    },
-                    |&site| site == end_node,
-                )
-                .map(|x| x.0)
-                .unwrap_or_default();
+                    let steps = pathfinding::directed::astar::astar(
+                        &start_node,
+                        |&site| sites.neighbours(site).iter().map(|&(s, d)| (s, metric(d))),
+                        |&site| {
+                            let site_v2 = sites.get(site).unwrap().pos;
+                            metric(end_v2.distance(site_v2))
+                        },
+                        |&site| site == end_node,
+                    )
+                    .map(|x| x.0)
+                    .unwrap_or_default();
 
-                // Adjust path
-                let mut path = Vec::with_capacity(steps.len());
-                path.extend(steps.into_iter().skip(1).map(|site| GridCoord::At(site)));
-                path.push(destination);
+                    // Construct path
+                    let mut path = Vec::with_capacity(steps.len() + 1);
+
+                    let touches = |idx: usize| {
+                        steps
+                            .get(idx)
+                            .map(|&s| current_pos.touches(s))
+                            .unwrap_or(false)
+                    };
+
+                    let skip = if touches(0) && touches(1) { 1 } else { 0 };
+                    path.extend(steps.into_iter().skip(skip).map(|site| GridCoord::at(site)));
+
+                    path.push(destination);
+                    path
+                };
                 ChangePath::Set(path)
             };
             (party_id, update)
@@ -169,15 +208,14 @@ fn pathfind(parties: &Parties, sites: &Sites) -> Vec<(PartyId, ChangePath)> {
 struct Movement {
     party_id: PartyId,
     next_position: GridCoord,
-    advance_path: bool,
 }
 
 fn move_to_next_coord(parties: &Parties, sites: &Sites) -> Vec<Movement> {
     parties
         .iter()
         .map(|(party_id, party_data)| {
-            let (next_position, advance_path) = party_data
-                .ai
+            let next_position = party_data
+                .movement
                 .path
                 .beginning()
                 .map(|destination| {
@@ -209,14 +247,12 @@ fn move_to_next_coord(parties: &Parties, sites: &Sites) -> Vec<Movement> {
                     let delta_t = t_speed * t_direction;
                     let next_t = (current_t + delta_t).clamp(0., 1.);
                     let next_pos = GridCoord::with_triple(start, end, next_t);
-                    let advance_path = next_pos == destination;
-                    (next_pos, advance_path)
+                    next_pos
                 })
-                .unwrap_or((party_data.position, false));
+                .unwrap_or(party_data.position);
             Movement {
                 party_id,
                 next_position,
-                advance_path,
             }
         })
         .collect()
@@ -243,6 +279,7 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[derive(Default)]
 struct CreateEntity<'a> {
     name: &'a str,
+    kind_name: &'static str,
     agent: Option<CreateAgent<'a>>,
     location: Option<CreateLocation<'a>>,
     party: Option<CreateParty<'a>>,
@@ -268,6 +305,7 @@ struct CreateParty<'a> {
 #[derive(Default)]
 pub struct TickCommands<'a> {
     create_entity_cmds: Vec<CreateEntity<'a>>,
+    move_to: Option<(ObjectId, ObjectId)>,
 }
 
 pub struct CreateLocationParams<'a> {
@@ -289,6 +327,10 @@ pub struct CreateFactionParams<'a> {
 }
 
 impl<'a> TickCommands<'a> {
+    pub fn issue_move_to_object(&mut self, subject: ObjectId, target: ObjectId) {
+        self.move_to = Some((subject, target));
+    }
+
     pub fn create_location(&mut self, params: CreateLocationParams<'a>) {
         let size = match params.settlement_kind {
             "town" => 2.5,
@@ -297,6 +339,7 @@ impl<'a> TickCommands<'a> {
         };
         self.create_entity_cmds.push(CreateEntity {
             name: params.name,
+            kind_name: "Location",
             agent: Some(CreateAgent {
                 tag: "",
                 flags: &[],
@@ -315,6 +358,7 @@ impl<'a> TickCommands<'a> {
     pub fn create_person(&mut self, params: CreatePersonParams<'a>) {
         self.create_entity_cmds.push(CreateEntity {
             name: params.name,
+            kind_name: "Person",
             agent: Some(CreateAgent {
                 tag: "",
                 flags: &[],
@@ -333,6 +377,7 @@ impl<'a> TickCommands<'a> {
     pub fn create_faction(&mut self, params: CreateFactionParams<'a>) {
         self.create_entity_cmds.push(CreateEntity {
             name: params.name,
+            kind_name: "Faction",
             agent: Some(CreateAgent {
                 tag: params.tag,
                 flags: &[AgentFlag::IsFaction],
@@ -348,7 +393,11 @@ fn process_entity_create_commands<'a>(
     commands: impl Iterator<Item = CreateEntity<'a>>,
 ) {
     for command in commands {
-        let entity = sim.entities.insert(EntityData::with_name(command.name));
+        let entity = sim.entities.insert(EntityData {
+            name: command.name.to_string(),
+            kind_name: command.kind_name,
+            ..Default::default()
+        });
 
         let agent = command.agent.map(|args| {
             let id = sim.agents.insert(AgentData {
@@ -369,7 +418,7 @@ fn process_entity_create_commands<'a>(
             id
         });
 
-        command.location.and_then(|args| {
+        let location = command.location.and_then(|args| {
             let site = match sim.sites.lookup(args.site) {
                 Some((id, _)) => id,
                 None => {
@@ -382,12 +431,12 @@ fn process_entity_create_commands<'a>(
                 buildings: BTreeSet::default(),
             });
             sim.sites.bind_location(site, location);
-            Some(())
+            Some(location)
         });
 
         let party = command.party.and_then(|args| {
             let (position, pos) = match sim.sites.lookup(args.site) {
-                Some((id, data)) => (GridCoord::At(id), data.pos),
+                Some((id, data)) => (GridCoord::at(id), data.pos),
                 None => {
                     println!("Undefined site '{}'", args.site);
                     return None;
@@ -400,7 +449,7 @@ fn process_entity_create_commands<'a>(
                 size: args.size,
                 layer: args.layer,
                 movement_speed: args.movement_speed,
-                ai: PartyAi::default(),
+                movement: PartyMovement::default(),
             });
             Some(id)
         });
@@ -408,5 +457,6 @@ fn process_entity_create_commands<'a>(
         let entity = &mut sim.entities[entity];
         entity.agent = agent;
         entity.party = party;
+        entity.location = location;
     }
 }

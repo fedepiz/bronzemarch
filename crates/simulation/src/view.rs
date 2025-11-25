@@ -103,6 +103,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
             let entity = &sim.entities[entity_id];
 
             obj.set("name", &entity.name);
+            obj.set("kind", entity.kind_name);
 
             if let Some(agent_id) = entity.agent {
                 struct Field {

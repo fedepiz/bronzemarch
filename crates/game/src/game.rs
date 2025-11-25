@@ -33,6 +33,8 @@ async fn amain() {
             break;
         }
 
+        let mut request = TickRequest::default();
+
         let mut is_mouse_over_ui = false;
         let mut is_keyboard_taken_by_ui = false;
         egui_macroquad::ui(|ctx| {
@@ -49,11 +51,22 @@ async fn amain() {
         let map_item_ids: Vec<_> = view.map_items.iter().map(|x| x.id).collect();
         populate_board(&mut board, &view, selected_entity);
 
-        if !is_mouse_over_ui && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
-            selected_entity = board
-                .hovered()
-                .and_then(|handle| map_item_ids.get(handle.0))
-                .copied();
+        if !is_mouse_over_ui {
+            if mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+                selected_entity = board
+                    .hovered()
+                    .and_then(|handle| map_item_ids.get(handle.0))
+                    .copied();
+            }
+            if mq::is_mouse_button_pressed(mq::MouseButton::Right) {
+                let target = board
+                    .hovered()
+                    .and_then(|handle| map_item_ids.get(handle.0))
+                    .copied();
+                if let (Some(subject), Some(target)) = (selected_entity, target) {
+                    request.commands.issue_move_to_object(subject, target);
+                }
+            }
         }
 
         if !is_keyboard_taken_by_ui {
@@ -71,10 +84,7 @@ async fn amain() {
         }
         egui_macroquad::draw();
 
-        let mut request = simulation::TickRequest {
-            advance_time: !is_paused,
-            ..Default::default()
-        };
+        request.advance_time = !is_paused;
 
         request.map_viewport = {
             let convert = |v: mq::Vec2| V2::new(v.x, v.y);

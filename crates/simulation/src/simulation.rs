@@ -30,6 +30,10 @@ impl ArenaSafe for AgentId {}
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 
+new_key_type! { pub(crate) struct GoodId; }
+new_key_type! { pub(crate) struct BuildingTypeId; }
+new_key_type! { pub(crate) struct BuildingId; }
+
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Entities = SlotMap<EntityId, EntityData>;
@@ -87,8 +91,6 @@ where
     out
 }
 
-new_key_type! { pub(crate) struct GoodId; }
-
 pub(crate) struct GoodData {
     pub tag: &'static str,
     pub name: &'static str,
@@ -100,8 +102,6 @@ impl Tagged for GoodData {
         self.tag
     }
 }
-
-new_key_type! { pub(crate) struct BuildingTypeId; }
 
 pub(crate) struct BuildingType {
     pub tag: &'static str,
@@ -361,8 +361,6 @@ impl Sites {
     }
 }
 
-new_key_type! { pub(crate) struct BuildingId; }
-
 pub(crate) struct BuildingData {
     pub typ: BuildingTypeId,
     pub location: LocationId,
@@ -432,17 +430,10 @@ impl Extents {
 #[derive(Default)]
 pub(crate) struct EntityData {
     pub name: String,
+    pub kind_name: &'static str,
     pub agent: Option<AgentId>,
     pub party: Option<PartyId>,
-}
-
-impl EntityData {
-    pub fn with_name(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            ..Default::default()
-        }
-    }
+    pub location: Option<LocationId>,
 }
 
 #[derive(Default)]
@@ -467,7 +458,7 @@ impl GridCoord {
             let start = a.min(b);
             let end = a.max(b);
             let t = if start == a { t } else { 1. - t };
-            GridCoord::Between(start, end, t)
+            GridCoord::between(start, end, t)
         }
     }
 
@@ -491,6 +482,13 @@ impl GridCoord {
         }
     }
 
+    pub fn touches(self, site: SiteId) -> bool {
+        match self {
+            Self::At(x) => x == site,
+            Self::Between(a, b, _) => site == a || site == b,
+        }
+    }
+
     pub fn closest_endpoint(self) -> SiteId {
         match self {
             Self::At(x) => x,
@@ -501,6 +499,15 @@ impl GridCoord {
                     b
                 }
             }
+        }
+    }
+
+    pub fn is_colinear(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::At(x), Self::At(y)) => x == y,
+            (Self::At(x), Self::Between(a, b, _)) => x == a || x == b,
+            (Self::Between(a, b, _), Self::At(x)) => x == a || x == b,
+            (Self::Between(a1, b1, _), Self::Between(a2, b2, _)) => a1 == a2 && b1 == b2,
         }
     }
 }
@@ -533,6 +540,10 @@ impl Path {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = GridCoord> {
+        self.0.iter().rev().copied()
+    }
 }
 
 pub(crate) struct PartyData {
@@ -542,12 +553,18 @@ pub(crate) struct PartyData {
     pub size: f32,
     pub layer: u8,
     pub movement_speed: f32,
-    pub ai: PartyAi,
+    pub movement: PartyMovement,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum MovementTarget {
+    Site(SiteId),
+    Party(PartyId),
 }
 
 #[derive(Default)]
-pub(crate) struct PartyAi {
-    pub target: Option<SiteId>,
+pub(crate) struct PartyMovement {
+    pub target: Option<MovementTarget>,
     pub path: Path,
     pub destination: Option<GridCoord>,
 }
