@@ -53,6 +53,7 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
             }
         }
 
+        // Advance pathing
         for party in sim.parties.values_mut() {
             let path = &mut party.movement.path;
             while path.beginning() == Some(party.position) {
