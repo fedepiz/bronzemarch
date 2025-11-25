@@ -73,3 +73,21 @@ where
         }
     }
 }
+
+impl<T> Hierarchy<T, T>
+where
+    T: Copy + Ord + ArenaSafe,
+{
+    pub fn root(&self, mut item: T) -> T {
+        loop {
+            match self.parent(item) {
+                Some(parent) => item = parent,
+                None => return item,
+            }
+        }
+    }
+
+    pub fn root_parent(&self, item: T) -> Option<T> {
+        self.parent(item).map(|parent| self.root(parent))
+    }
+}

@@ -101,8 +101,34 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
 
         ObjectHandle::Party(party_id) => {
             let party = &sim.parties[party_id];
-            let agent = &sim.agents[party.agent];
-            obj.set("name", agent.name.as_str());
+            let agent_data = &sim.agents[party.agent];
+            obj.set("name", agent_data.name.as_str());
+
+            {
+                struct Field {
+                    tag: &'static str,
+                    query: RelatedAgent,
+                }
+
+                let fields = [
+                    Field {
+                        tag: "faction",
+                        query: RelatedAgent::Faction,
+                    },
+                    Field {
+                        tag: "country",
+                        query: RelatedAgent::Country,
+                    },
+                ];
+
+                for field in fields {
+                    if let Some((_, found)) =
+                        query_related_agent(&sim.agents, party.agent, field.query)
+                    {
+                        obj.set(field.tag, found.name.as_str());
+                    }
+                }
+            }
         }
 
         ObjectHandle::Site(_) => {

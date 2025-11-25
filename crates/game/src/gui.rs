@@ -54,8 +54,8 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
             let entries = [
                 ("Name", "name"),
                 ("Kind", "kind"),
-                ("Leader", "leader"),
                 ("Faction", "faction"),
+                ("Country", "country"),
             ];
 
             egui::Grid::new("overview-gui").show(ui, |ui| {

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use slotmap::*;
+use strum::EnumCount;
 use util::arena::ArenaSafe;
 use util::hierarchy::Hierarchy;
 use util::tally::Tally;
@@ -167,6 +168,33 @@ impl std::ops::IndexMut<AgentId> for Agents {
 #[derive(Default)]
 pub(crate) struct AgentData {
     pub name: AgentName,
+    pub flags: AgentFlags,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, EnumCount)]
+pub(crate) enum AgentFlag {
+    IsFaction,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+pub(crate) struct AgentFlags([bool; AgentFlag::COUNT]);
+
+impl AgentFlags {
+    pub fn new(flags: &[AgentFlag]) -> Self {
+        let mut this = Self::default();
+        for &flag in flags {
+            this.set(flag, true);
+        }
+        this
+    }
+    pub fn set(&mut self, flag: AgentFlag, value: bool) {
+        let idx = flag as usize;
+        self.0[idx] = value;
+    }
+    pub fn get(&self, flag: AgentFlag) -> bool {
+        let idx = flag as usize;
+        self.0[idx]
+    }
 }
 
 #[derive(Default)]
@@ -190,6 +218,55 @@ impl std::fmt::Display for AgentName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.rendered.fmt(f)
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum RelatedAgent {
+    Faction,
+    Country,
+}
+
+pub(crate) fn query_related_agent(
+    agents: &Agents,
+    subject: AgentId,
+    query: RelatedAgent,
+) -> Option<(AgentId, &AgentData)> {
+    enum HierarchyTraversal {
+        Parent,
+        Root,
+    }
+
+    struct Plan<'a> {
+        hierarchy: &'a Hierarchy<AgentId, AgentId>,
+        traversal: HierarchyTraversal,
+        flags: &'a [AgentFlag],
+    }
+
+    let plan = match query {
+        RelatedAgent::Faction => Plan {
+            hierarchy: &agents.political_hierarchy,
+            traversal: HierarchyTraversal::Parent,
+            flags: &[AgentFlag::IsFaction],
+        },
+        RelatedAgent::Country => Plan {
+            hierarchy: &agents.political_hierarchy,
+            traversal: HierarchyTraversal::Root,
+            flags: &[AgentFlag::IsFaction],
+        },
+    };
+
+    let target = match plan.traversal {
+        HierarchyTraversal::Parent => plan.hierarchy.parent(subject),
+        HierarchyTraversal::Root => plan.hierarchy.root_parent(subject),
+    }?;
+
+    let target_data = &agents.entries[target];
+    let all_flags_check = plan.flags.iter().all(|&flag| target_data.flags.get(flag));
+    if !all_flags_check {
+        return None;
+    }
+
+    Some((target, target_data))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
