@@ -14,11 +14,13 @@ pub struct Simulation {
     pub(crate) date: Date,
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
+    pub(crate) pop_types: PopTypes,
     pub(crate) building_types: BuildingTypes,
     pub(crate) entities: Entities,
     pub(crate) parties: Parties,
     pub(crate) agents: Agents,
     pub(crate) locations: Locations,
+    pub(crate) pops: Pops,
     pub(crate) buildings: Buildings,
 }
 
@@ -31,14 +33,21 @@ new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
 
 new_key_type! { pub(crate) struct GoodId; }
+
+new_key_type! { pub(crate) struct PopTypeId; }
+new_key_type! { pub(crate) struct PopId; }
+
 new_key_type! { pub(crate) struct BuildingTypeId; }
 new_key_type! { pub(crate) struct BuildingId; }
 
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
+pub(crate) type PopTypes = SlotMap<PopTypeId, PopType>;
 pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
+
+pub(crate) type Pops = SlotMap<PopId, PopData>;
 pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
 
 impl Simulation {
@@ -91,16 +100,57 @@ where
     out
 }
 
+fn parse_tally_sm<K: Key, T: Tagged>(
+    coll: &SlotMap<K, T>,
+    items: &[(&str, f64)],
+    kind_name: &str,
+) -> SecondaryMap<K, f64> {
+    let mut out: SecondaryMap<K, f64> = coll.keys().map(|id| (id, 0.)).collect();
+    for (tag, value) in items {
+        match coll.lookup(tag) {
+            Some(id) => out[id] += *value,
+            None => println!("Undefined {kind_name} with tag '{tag}'"),
+        }
+    }
+    out
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct GoodPopDemand {
+    pub amount: f64,
+    pub low_prosperity: f64,
+    pub high_propserity: f64,
+}
+
 pub(crate) struct GoodData {
     pub tag: &'static str,
     pub name: &'static str,
     pub price: f64,
+    pub food_rate: f64,
+    pub demand: &'static [GoodPopDemand],
 }
 
 impl Tagged for GoodData {
     fn tag(&self) -> &str {
         self.tag
     }
+}
+
+pub(crate) struct PopType {
+    pub tag: &'static str,
+    pub name: &'static str,
+    pub demand: SecondaryMap<GoodId, f64>,
+}
+
+impl Tagged for PopType {
+    fn tag(&self) -> &str {
+        self.tag
+    }
+}
+
+pub(crate) struct PopData {
+    pub typ: PopTypeId,
+    pub size: i64,
 }
 
 pub(crate) struct BuildingType {
@@ -254,11 +304,18 @@ pub(crate) fn query_related_agent(
 pub(crate) struct SiteId(usize);
 
 #[derive(Default)]
+pub(crate) struct SiteRGO {
+    pub rates: Tally<GoodId>,
+    pub capacity: i64,
+}
+
+#[derive(Default)]
 pub(crate) struct SiteData {
     pub tag: String,
     pub pos: V2,
     pub neighbours: Vec<(SiteId, f32)>,
     pub location: Option<LocationId>,
+    pub rgo: SiteRGO,
 }
 
 #[derive(Default)]
@@ -276,13 +333,14 @@ impl std::ops::Index<SiteId> for Sites {
 }
 
 impl Sites {
-    pub fn define(&mut self, tag: impl Into<String>, pos: V2) -> SiteId {
+    pub fn define(&mut self, tag: impl Into<String>, pos: V2, rgo: SiteRGO) -> SiteId {
         let id = SiteId(self.entries.len());
         self.entries.push(SiteData {
             tag: tag.into(),
             pos,
             neighbours: vec![],
             location: None,
+            rgo,
         });
         id
     }
@@ -366,6 +424,7 @@ pub(crate) struct BuildingData {
     pub location: LocationId,
     pub size: i64,
 }
+
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug, Default)]
 pub struct V2 {
     pub x: f32,
@@ -435,11 +494,49 @@ pub(crate) struct EntityData {
     pub party: Option<PartyId>,
     pub location: Option<LocationId>,
 }
-
-#[derive(Default)]
 pub(crate) struct LocationData {
     pub site: SiteId,
+    pub population: i64,
+    pub prosperity: f64,
+    pub pops: BTreeSet<PopId>,
     pub buildings: BTreeSet<BuildingId>,
+    pub market: Market,
+}
+
+#[derive(Default)]
+pub(crate) struct MarketGood {
+    pub stock: f64,
+    pub price: f64,
+    pub supply: f64,
+    pub demand: f64,
+    pub consumed: f64,
+}
+
+pub(crate) struct Market {
+    pub goods: SecondaryMap<GoodId, MarketGood>,
+    pub food: f64,
+    pub income: f64,
+}
+
+impl Market {
+    pub fn new(good_types: &GoodTypes) -> Self {
+        Self {
+            goods: good_types
+                .iter()
+                .map(|(id, typ)| {
+                    (
+                        id,
+                        MarketGood {
+                            price: typ.price,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+            food: 0.,
+            income: 0.,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -577,6 +674,8 @@ fn init(sim: &mut Simulation) {
             tag: &'a str,
             name: &'a str,
             price: f64,
+            food_rate: f64,
+            demand: &'a [GoodPopDemand],
         }
 
         const DESCS: &[Desc] = &[
@@ -584,16 +683,41 @@ fn init(sim: &mut Simulation) {
                 tag: "wheat",
                 name: "Wheat",
                 price: 10.,
+                food_rate: 1.0,
+                demand: &[GoodPopDemand {
+                    amount: 1.0,
+                    low_prosperity: 0.0,
+                    high_propserity: 0.0,
+                }],
+            },
+            Desc {
+                tag: "meat",
+                name: "Meat",
+                price: 10.,
+                food_rate: 1.,
+                demand: &[],
             },
             Desc {
                 tag: "lumber",
                 name: "Lumber",
                 price: 10.,
+                food_rate: 0.0,
+                demand: &[GoodPopDemand {
+                    amount: 1.0,
+                    low_prosperity: 0.0,
+                    high_propserity: 0.0,
+                }],
             },
             Desc {
                 tag: "tools",
                 name: "Tools",
                 price: 20.,
+                food_rate: 0.0,
+                demand: &[GoodPopDemand {
+                    amount: 0.1,
+                    low_prosperity: 0.0,
+                    high_propserity: 0.0,
+                }],
             },
         ];
 
@@ -602,6 +726,48 @@ fn init(sim: &mut Simulation) {
                 tag: desc.tag,
                 name: desc.name,
                 price: desc.price,
+                food_rate: desc.food_rate,
+                demand: desc.demand,
+            });
+        }
+    }
+
+    // Init pops
+    {
+        struct Desc {
+            tag: &'static str,
+            name: &'static str,
+            demand: &'static [(&'static str, f64)],
+        }
+
+        const DESCS: &[Desc] = &[
+            Desc {
+                tag: "paesants",
+                name: "Paesants",
+                demand: &[("wheat", 1.0), ("lumber", 0.1)],
+            },
+            Desc {
+                tag: "artisans",
+                name: "Artisans",
+                demand: &[
+                    ("wheat", 1.0),
+                    ("meat", 0.2),
+                    ("lumber", 0.1),
+                    ("tools", 1.0),
+                ],
+            },
+            Desc {
+                tag: "nobles",
+                name: "Nobles",
+                demand: &[("wheat", 1.0), ("meat", 1.0), ("lumber", 0.1)],
+            },
+        ];
+
+        for desc in DESCS {
+            sim.pop_types.insert(PopType {
+                tag: desc.tag,
+                name: desc.name,
+                demand: parse_tally_sm(&sim.good_types, desc.demand, "goods"),
             });
         }
     }
@@ -649,16 +815,49 @@ fn init(sim: &mut Simulation) {
     }
     // Init sites
     {
-        const DESCS: &[(&str, (f32, f32))] = &[
-            ("caer_ligualid", (0., 0.)),
-            ("din_drust", (-6., -9.)),
-            ("anava", (7., -3.)),
-            ("llan_heledd", (3., 12.)),
-            ("caer_ligualid-din_drust", (-4., -4.)),
-            ("caer_ligualid_south", (0., 8.)),
+        struct Desc {
+            tag: &'static str,
+            pos: (f32, f32),
+            rgo: &'static [(&'static str, f64)],
+        }
+        const DESCS: &[Desc] = &[
+            Desc {
+                tag: "caer_ligualid",
+                pos: (0., 0.),
+                rgo: &[("wheat", 1.2), ("lumber", 0.5)],
+            },
+            Desc {
+                tag: "din_drust",
+                pos: (-6., -9.),
+                rgo: &[("wheat", 1.2), ("lumber", 0.5)],
+            },
+            Desc {
+                tag: "anava",
+                pos: (7., -3.),
+                rgo: &[("wheat", 1.6)],
+            },
+            Desc {
+                tag: "llan_heledd",
+                pos: (3., 12.),
+                rgo: &[("wheat", 1.2), ("lumber", 0.5)],
+            },
+            Desc {
+                tag: "caer_ligualid-din_drust",
+                pos: (-4., -4.),
+                rgo: &[],
+            },
+            Desc {
+                tag: "caer_ligualid_south",
+                pos: (0., 8.),
+                rgo: &[],
+            },
         ];
-        for &(tag, pos) in DESCS {
-            sim.sites.define(tag, pos.into());
+        for desc in DESCS {
+            let rgo = SiteRGO {
+                rates: parse_tally(&sim.good_types, desc.rgo, "goods"),
+                capacity: 5_000,
+            };
+            sim.sites.define(desc.tag, desc.pos.into(), rgo);
         }
 
         const CONNECTIONS: &[(&str, &str)] = &[

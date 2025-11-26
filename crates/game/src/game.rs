@@ -233,11 +233,42 @@ fn init_sim(sim: &mut Simulation) {
 
     let mut request = TickRequest::default();
     for desc in descs {
+        let (population, prosperity) = match desc.kind {
+            "town" => (10_000, 0.4),
+            "village" => (5_000, 0.3),
+            _ => panic!(),
+        };
+
+        let pops: &[CreatePop] = match desc.kind {
+            "village" => &[CreatePop {
+                tag: "paesants",
+                size: 5_000,
+            }],
+            "town" => &[
+                CreatePop {
+                    tag: "paesants",
+                    size: 7_500,
+                },
+                CreatePop {
+                    tag: "artisans",
+                    size: 1_000,
+                },
+                CreatePop {
+                    tag: "nobles",
+                    size: 200,
+                },
+            ],
+            _ => &[],
+        };
+
         request.commands.create_location(CreateLocationParams {
             name: desc.name,
             site: desc.site,
             settlement_kind: desc.kind,
             faction: "rheged",
+            population,
+            prosperity,
+            pops,
         });
     }
 

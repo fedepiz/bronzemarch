@@ -131,6 +131,53 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     }
                 }
             }
+
+            if let Some(location) = entity.location {
+                let location = &sim.locations[location];
+                let mut entry = Object::new();
+                entry.set("population", location.population.to_string());
+                entry.set(
+                    "prosperity",
+                    format!("{:1.2}%", (location.prosperity * 100.0)),
+                );
+
+                entry.set("food", format!("{:1.1}", location.market.food));
+                entry.set("income", format!("{:1.0}$", location.market.income));
+
+                let pops: Vec<_> = location
+                    .pops
+                    .iter()
+                    .map(|&pop_id| {
+                        let pop = &sim.pops[pop_id];
+                        let typ = &sim.pop_types[pop.typ];
+                        let mut obj = Object::new();
+                        obj.set("name", typ.name);
+                        obj.set("size", format!("{}", pop.size));
+                        obj
+                    })
+                    .collect();
+                entry.set("pops", pops);
+
+                let market_goods: Vec<_> = location
+                    .market
+                    .goods
+                    .iter()
+                    .map(|(id, good)| {
+                        let mut entry = Object::new();
+                        let typ = &sim.good_types[id];
+                        entry.set("name", typ.name);
+                        entry.set("stock", format!("{:1.1}", good.stock));
+                        entry.set("supply", format!("{:1.1}", good.supply));
+                        entry.set("demand", format!("{:1.1}", good.demand));
+                        entry.set("price", format!("{:1.2}$", good.price));
+                        entry
+                    })
+                    .collect();
+
+                entry.set("market_goods", market_goods);
+
+                obj.set("location", entry);
+            }
         }
 
         ObjectHandle::Site(_) => {

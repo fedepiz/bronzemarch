@@ -29,6 +29,10 @@ impl Date {
         self.0 += 1;
     }
 
+    pub fn is_new_day(&self) -> bool {
+        self.0 % Self::TICKS_IN_DAY == 0
+    }
+
     pub fn calendar_day(&self) -> u64 {
         (self.0 / Self::TICKS_IN_DAY) % Self::DAYS_IN_MONTH + 1
     }

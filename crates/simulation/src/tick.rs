@@ -30,8 +30,12 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     if request.advance_time {
         sim.date.advance();
 
+        if sim.date.is_new_day() {
+            tick_location_economy(&mut sim.locations, &sim.good_types, &sim.sites);
+        }
+
         if let Some((subject, target)) = request.commands.move_to {
-            apply_move_to(sim, subject, target);
+            apply_move_order_to(sim, subject, target);
         }
 
         let result = tick_party_ai(sim);
@@ -86,7 +90,7 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
     view
 }
 
-fn apply_move_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId) {
+fn apply_move_order_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId) {
     let subject = match subject.0 {
         ObjectHandle::Entity(id) => match sim.entities[id].party {
             Some(x) => x,
@@ -104,6 +108,73 @@ fn apply_move_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId) {
         _ => None,
     };
     sim.parties[subject].movement.target = target;
+}
+
+fn tick_location_economy(locations: &mut Locations, good_types: &GoodTypes, sites: &Sites) {
+    // New location economic tick
+    for location in locations.values_mut() {
+        const GOODS_SCALE: f64 = 0.01;
+
+        let mut new_market = Market::new(good_types);
+
+        // Calculate population demand
+        for (good_id, good_type) in good_types {
+            let mut rate = 0.0;
+            for entry in good_type.demand {
+                let r = inverse_lerp(
+                    entry.low_prosperity,
+                    entry.high_propserity,
+                    location.prosperity,
+                );
+                rate += r;
+            }
+            let demand = rate * location.population as f64;
+            new_market.goods[good_id].demand += demand * GOODS_SCALE;
+        }
+
+        // Calculate RGO production
+        let rgo = &sites[location.site].rgo;
+        let num_workers = location.population.min(rgo.capacity) as f64;
+
+        let mut value_of_rgo_production = 0.0;
+
+        for (good_id, rate) in rgo.rates.iter() {
+            let produced = rate * num_workers * GOODS_SCALE;
+            let price = location.market.goods[good_id].price;
+            value_of_rgo_production += price * produced;
+            new_market.goods[good_id].supply += produced;
+        }
+
+        // Update good prices and stock
+        for (good_id, good_type) in good_types {
+            let new_good = &mut new_market.goods[good_id];
+            let sd_modifier = {
+                let numerator = new_good.demand - new_good.supply;
+                let denominator = new_good.supply.max(new_good.demand).max(0.1);
+                (numerator / denominator).clamp(-0.75, 0.75)
+            };
+            let prosperity_modifier = location.prosperity.max(0.);
+            let target_price = good_type.price * (1. + sd_modifier) * (1. + prosperity_modifier);
+            let current_price = location.market.goods[good_id].price;
+            let new_price = lerp_f64(current_price, target_price, 0.9);
+
+            new_good.price = new_price;
+
+            let prev_stock = location.market.goods[good_id].stock;
+            let available = prev_stock + new_good.supply;
+            new_good.consumed = available.min(new_good.demand);
+
+            let max_stock = location.population as f64 * GOODS_SCALE * 10.0;
+            new_good.stock = (available - new_good.consumed).clamp(0.0, max_stock);
+
+            new_market.food += new_good.consumed * good_type.food_rate;
+        }
+
+        new_market.income = value_of_rgo_production;
+
+        // Update market proper
+        location.market = new_market;
+    }
 }
 
 enum ChangePath {
@@ -277,6 +348,10 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+fn lerp_f64(a: f64, b: f64, t: f64) -> f64 {
+    a + (b - a) * t
+}
+
 #[derive(Default)]
 struct CreateEntity<'a> {
     name: &'a str,
@@ -292,8 +367,16 @@ struct CreateAgent<'a> {
     political_parent: Option<&'a str>,
 }
 
+pub struct CreatePop<'a> {
+    pub tag: &'a str,
+    pub size: i64,
+}
+
 struct CreateLocation<'a> {
     site: &'a str,
+    population: i64,
+    prosperity: f64,
+    pops: &'a [CreatePop<'a>],
 }
 
 struct CreateParty<'a> {
@@ -314,6 +397,9 @@ pub struct CreateLocationParams<'a> {
     pub site: &'a str,
     pub faction: &'a str,
     pub settlement_kind: &'a str,
+    pub population: i64,
+    pub prosperity: f64,
+    pub pops: &'a [CreatePop<'a>],
 }
 
 pub struct CreatePersonParams<'a> {
@@ -346,7 +432,12 @@ impl<'a> TickCommands<'a> {
                 flags: &[],
                 political_parent: Some(params.faction),
             }),
-            location: Some(CreateLocation { site: params.site }),
+            location: Some(CreateLocation {
+                site: params.site,
+                pops: params.pops,
+                population: params.population,
+                prosperity: params.prosperity,
+            }),
             party: Some(CreateParty {
                 site: params.site,
                 size,
@@ -429,9 +520,31 @@ fn process_entity_create_commands<'a>(
             };
             let location = sim.locations.insert(LocationData {
                 site,
+                pops: BTreeSet::default(),
                 buildings: BTreeSet::default(),
+                population: args.population,
+                prosperity: args.prosperity,
+                market: Market::new(&sim.good_types),
             });
             sim.sites.bind_location(site, location);
+
+            for create_pop in args.pops {
+                let location = &mut sim.locations[location];
+                match sim.pop_types.lookup(create_pop.tag) {
+                    Some(typ) => {
+                        let pop = sim.pops.insert(PopData {
+                            typ,
+                            size: create_pop.size,
+                        });
+                        location.pops.insert(pop);
+                    }
+                    None => {
+                        println!("Unknown pop type '{}'", create_pop.tag);
+                        continue;
+                    }
+                }
+            }
+
             Some(location)
         });
 
@@ -460,4 +573,13 @@ fn process_entity_create_commands<'a>(
         entity.party = party;
         entity.location = location;
     }
+}
+
+fn inverse_lerp(min: f64, max: f64, t: f64) -> f64 {
+    if min == max {
+        return 1.0;
+    }
+    assert!(min == max);
+    let t = t.clamp(min, max);
+    (t - min) / (max - min)
 }
