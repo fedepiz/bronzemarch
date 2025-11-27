@@ -1,5 +1,6 @@
 use macroquad::prelude as mq;
 use simulation::*;
+use util::arena::Arena;
 
 use crate::{gui::WindowKind, *};
 
@@ -14,8 +15,10 @@ pub fn start() {
 }
 
 async fn amain() {
+    let mut frame_arena = Arena::default();
+
     let mut sim = Simulation::new();
-    init_sim(&mut sim);
+    init_sim(&mut sim, &frame_arena);
 
     let mut gui = gui::Gui::new();
     egui_macroquad::cfg(|ctx| gui.setup(ctx));
@@ -29,6 +32,7 @@ async fn amain() {
     let mut is_paused = true;
 
     loop {
+        frame_arena.reset();
         if mq::is_key_pressed(mq::KeyCode::Escape) {
             break;
         }
@@ -109,7 +113,7 @@ async fn amain() {
             window_kinds.extend(selected_entity.map(|_| WindowKind::Entity));
         }
 
-        view = sim.tick(request);
+        view = sim.tick(request, &frame_arena);
         mq::next_frame().await;
     }
 }
@@ -194,7 +198,7 @@ fn update_camera_from_keyboard(board: &mut board::Board) {
     board.update_camera(dtranslate, dzoom);
 }
 
-fn init_sim(sim: &mut Simulation) {
+fn init_sim(sim: &mut Simulation, arena: &Arena) {
     struct Desc<'a> {
         name: &'a str,
         site: &'a str,
@@ -229,13 +233,13 @@ fn init_sim(sim: &mut Simulation) {
         tag: "rheged",
         name: "Rheged",
     });
-    sim.tick(request);
+    sim.tick(request, arena);
 
     let mut request = TickRequest::default();
     for desc in descs {
-        let (population, prosperity) = match desc.kind {
-            "town" => (10_000, 0.4),
-            "village" => (5_000, 0.3),
+        let prosperity = match desc.kind {
+            "town" => 0.4,
+            "village" => 0.3,
             _ => panic!(),
         };
 
@@ -266,7 +270,6 @@ fn init_sim(sim: &mut Simulation) {
             site: desc.site,
             settlement_kind: desc.kind,
             faction: "rheged",
-            population,
             prosperity,
             pops,
         });
@@ -282,5 +285,5 @@ fn init_sim(sim: &mut Simulation) {
         site: "din_drust",
         faction: "rheged",
     });
-    sim.tick(request);
+    sim.tick(request, arena);
 }

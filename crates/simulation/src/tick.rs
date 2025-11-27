@@ -1,7 +1,6 @@
-use std::collections::BTreeSet;
-
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
+use util::arena::Arena;
 
 use crate::date::Date;
 use crate::object::*;
@@ -26,13 +25,21 @@ fn key_rng<K: slotmap::Key>(date: Date, key: K) -> SmallRng {
     SmallRng::seed_from_u64(seed)
 }
 
-pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest) -> SimView {
+pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena) -> SimView {
     if request.advance_time {
         sim.date.advance();
 
-        if sim.date.is_new_day() {
-            tick_location_economy(&mut sim.locations, &sim.good_types, &sim.sites);
-        }
+        let tick_market = sim.date.is_new_day();
+
+        tick_location_economy(
+            arena,
+            &sim.entities,
+            &mut sim.locations,
+            &sim.tokens,
+            &sim.good_types,
+            &sim.sites,
+            tick_market,
+        );
 
         if let Some((subject, target)) = request.commands.move_to {
             apply_move_order_to(sim, subject, target);
@@ -110,31 +117,53 @@ fn apply_move_order_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId
     sim.parties[subject].movement.target = target;
 }
 
-fn tick_location_economy(locations: &mut Locations, good_types: &GoodTypes, sites: &Sites) {
+fn tick_location_economy(
+    arena: &Arena,
+    entities: &Entities,
+    locations: &mut Locations,
+    tokens: &Tokens,
+    good_types: &GoodTypes,
+    sites: &Sites,
+    tick_market: bool,
+) {
     // New location economic tick
     for location in locations.values_mut() {
+        let tokens = {
+            let entity = &entities[location.entity];
+            arena.alloc_iter(
+                entity
+                    .tokens
+                    .into_iter()
+                    .flat_map(|id| tokens.all_tokens_in(id)),
+            )
+        };
+
+        location.population = Tokens::count_size(tokens, TokenCategory::Pop);
+
+        if !tick_market {
+            continue;
+        }
+
         const GOODS_SCALE: f64 = 0.01;
 
         let mut new_market = Market::new(good_types);
 
-        // Calculate population demand
-        for (good_id, good_type) in good_types {
-            let mut rate = 0.0;
-            for entry in good_type.demand {
-                let r = inverse_lerp(
-                    entry.low_prosperity,
-                    entry.high_propserity,
-                    location.prosperity,
-                );
-                rate += r;
+        // Calculate demand
+        let mut rgo_points = 0.0;
+        for tok in tokens {
+            let size = tok.data.size as f64;
+            for (good_id, &amt) in &tok.typ.demand {
+                new_market.goods[good_id].demand += amt * size * GOODS_SCALE;
             }
-            let demand = rate * location.population as f64;
-            new_market.goods[good_id].demand += demand * GOODS_SCALE;
+            for (good_id, &amt) in &tok.typ.supply {
+                new_market.goods[good_id].supply += amt * size * GOODS_SCALE;
+            }
+            rgo_points += tok.typ.rgo_points * size;
         }
 
         // Calculate RGO production
         let rgo = &sites[location.site].rgo;
-        let num_workers = location.population.min(rgo.capacity) as f64;
+        let num_workers = rgo_points.floor().min(rgo.capacity as f64);
 
         let mut value_of_rgo_production = 0.0;
 
@@ -163,11 +192,17 @@ fn tick_location_economy(locations: &mut Locations, good_types: &GoodTypes, site
             let prev_stock = location.market.goods[good_id].stock;
             let available = prev_stock + new_good.supply;
             new_good.consumed = available.min(new_good.demand);
+            new_good.satisfaction = if new_good.demand <= 0.0 {
+                1.0
+            } else {
+                new_good.consumed / new_good.demand
+            };
 
             let max_stock = location.population as f64 * GOODS_SCALE * 10.0;
             new_good.stock = (available - new_good.consumed).clamp(0.0, max_stock);
 
-            new_market.food += new_good.consumed * good_type.food_rate;
+            new_market.food_consumed += new_good.consumed * good_type.food_rate;
+            new_market.food_stockpile += new_good.stock * good_type.food_rate;
         }
 
         new_market.income = value_of_rgo_production;
@@ -359,6 +394,7 @@ struct CreateEntity<'a> {
     agent: Option<CreateAgent<'a>>,
     location: Option<CreateLocation<'a>>,
     party: Option<CreateParty<'a>>,
+    has_tokens: bool,
 }
 
 struct CreateAgent<'a> {
@@ -374,7 +410,6 @@ pub struct CreatePop<'a> {
 
 struct CreateLocation<'a> {
     site: &'a str,
-    population: i64,
     prosperity: f64,
     pops: &'a [CreatePop<'a>],
 }
@@ -397,7 +432,6 @@ pub struct CreateLocationParams<'a> {
     pub site: &'a str,
     pub faction: &'a str,
     pub settlement_kind: &'a str,
-    pub population: i64,
     pub prosperity: f64,
     pub pops: &'a [CreatePop<'a>],
 }
@@ -432,10 +466,10 @@ impl<'a> TickCommands<'a> {
                 flags: &[],
                 political_parent: Some(params.faction),
             }),
+            has_tokens: true,
             location: Some(CreateLocation {
                 site: params.site,
                 pops: params.pops,
-                population: params.population,
                 prosperity: params.prosperity,
             }),
             party: Some(CreateParty {
@@ -491,6 +525,12 @@ fn process_entity_create_commands<'a>(
             ..Default::default()
         });
 
+        let tokens = if command.has_tokens {
+            Some(sim.tokens.add_container())
+        } else {
+            None
+        };
+
         let agent = command.agent.map(|args| {
             let id = sim.agents.insert(AgentData {
                 entity,
@@ -519,24 +559,20 @@ fn process_entity_create_commands<'a>(
                 }
             };
             let location = sim.locations.insert(LocationData {
+                entity,
                 site,
-                pops: BTreeSet::default(),
-                buildings: BTreeSet::default(),
-                population: args.population,
+                population: 0,
                 prosperity: args.prosperity,
                 market: Market::new(&sim.good_types),
             });
             sim.sites.bind_location(site, location);
 
             for create_pop in args.pops {
-                let location = &mut sim.locations[location];
-                match sim.pop_types.lookup(create_pop.tag) {
+                let tokens = tokens.unwrap();
+
+                match sim.tokens.types.lookup(create_pop.tag) {
                     Some(typ) => {
-                        let pop = sim.pops.insert(PopData {
-                            typ,
-                            size: create_pop.size,
-                        });
-                        location.pops.insert(pop);
+                        sim.tokens.add_token(tokens, typ, create_pop.size);
                     }
                     None => {
                         println!("Unknown pop type '{}'", create_pop.tag);
@@ -572,14 +608,6 @@ fn process_entity_create_commands<'a>(
         entity.agent = agent;
         entity.party = party;
         entity.location = location;
+        entity.tokens = tokens;
     }
-}
-
-fn inverse_lerp(min: f64, max: f64, t: f64) -> f64 {
-    if min == max {
-        return 1.0;
-    }
-    assert!(min == max);
-    let t = t.clamp(min, max);
-    (t - min) / (max - min)
 }

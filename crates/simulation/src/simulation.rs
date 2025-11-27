@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use num_enum::TryFromPrimitive;
 use slotmap::*;
-use strum::EnumCount;
-use util::arena::ArenaSafe;
+use strum::{EnumCount, EnumIter};
+use util::arena::{self, Arena, ArenaSafe};
 use util::hierarchy::Hierarchy;
 use util::tally::Tally;
 
@@ -14,14 +15,11 @@ pub struct Simulation {
     pub(crate) date: Date,
     pub(crate) sites: Sites,
     pub(crate) good_types: GoodTypes,
-    pub(crate) pop_types: PopTypes,
-    pub(crate) building_types: BuildingTypes,
+    pub(crate) tokens: Tokens,
     pub(crate) entities: Entities,
     pub(crate) parties: Parties,
     pub(crate) agents: Agents,
     pub(crate) locations: Locations,
-    pub(crate) pops: Pops,
-    pub(crate) buildings: Buildings,
 }
 
 new_key_type! { pub (crate) struct EntityId; }
@@ -34,21 +32,140 @@ new_key_type! { pub(crate) struct PartyId; }
 
 new_key_type! { pub(crate) struct GoodId; }
 
-new_key_type! { pub(crate) struct PopTypeId; }
-new_key_type! { pub(crate) struct PopId; }
-
-new_key_type! { pub(crate) struct BuildingTypeId; }
-new_key_type! { pub(crate) struct BuildingId; }
+new_key_type! { pub(crate) struct TokenTypeId; }
+new_key_type! { pub(crate) struct TokenContainerId; }
+new_key_type! { pub(crate) struct TokenId; }
 
 pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
-pub(crate) type PopTypes = SlotMap<PopTypeId, PopType>;
-pub(crate) type BuildingTypes = SlotMap<BuildingTypeId, BuildingType>;
 pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
 
-pub(crate) type Pops = SlotMap<PopId, PopData>;
-pub(crate) type Buildings = SlotMap<BuildingId, BuildingData>;
+#[derive(Default)]
+pub(crate) struct Tokens {
+    pub types: SlotMap<TokenTypeId, TokenType>,
+    pub containers: SlotMap<TokenContainerId, BTreeSet<TokenId>>,
+    pub tokens: SlotMap<TokenId, TokenData>,
+}
+
+pub(crate) struct ReadToken<'a> {
+    pub id: TokenId,
+    pub data: &'a TokenData,
+    pub typ: &'a TokenType,
+}
+
+impl<'a> ArenaSafe for ReadToken<'a> {}
+
+impl Tokens {
+    pub fn define_type(&mut self, typ: TokenType) -> TokenTypeId {
+        match self.types.lookup(typ.tag) {
+            Some(existing) => {
+                println!("Redefition of token type with tag '{}'", typ.tag);
+                existing
+            }
+            None => self.types.insert(typ),
+        }
+    }
+
+    pub fn add_container(&mut self) -> TokenContainerId {
+        self.containers.insert(Default::default())
+    }
+
+    pub fn add_token(
+        &mut self,
+        container: TokenContainerId,
+        typ: TokenTypeId,
+        size: i64,
+    ) -> TokenId {
+        match self.find_token_with_characteristics(container, typ) {
+            Some(tok_id) => {
+                self.tokens[tok_id].size += size;
+                tok_id
+            }
+            None => {
+                let id = self.tokens.insert(TokenData {
+                    container,
+                    typ,
+                    size,
+                });
+                self.containers[container].insert(id);
+                id
+            }
+        }
+    }
+
+    pub fn all_tokens_of_category<'a>(
+        &'a self,
+        container: TokenContainerId,
+        category: TokenCategory,
+    ) -> impl Iterator<Item = ReadToken<'a>> + use<'a> {
+        self.all_tokens_in(container)
+            .filter(move |tok| tok.typ.category == category)
+    }
+
+    pub fn all_tokens_in<'a>(
+        &'a self,
+        container: TokenContainerId,
+    ) -> impl Iterator<Item = ReadToken<'a>> {
+        self.containers
+            .get(container)
+            .into_iter()
+            .flat_map(|container| container.iter().copied())
+            .map(|id| {
+                let data = &self.tokens[id];
+                let typ = &self.types[data.typ];
+                ReadToken { id, data, typ }
+            })
+    }
+
+    pub fn find_token_with_characteristics(
+        &self,
+        container: TokenContainerId,
+        typ: TokenTypeId,
+    ) -> Option<TokenId> {
+        self.all_tokens_in(container)
+            .find(|tok| tok.data.typ == typ)
+            .map(|tok| tok.id)
+    }
+
+    pub fn count_size(tokens: &[ReadToken], category: TokenCategory) -> i64 {
+        tokens
+            .iter()
+            .filter(|tok| tok.typ.category == category)
+            .map(|tok| tok.data.size)
+            .sum()
+    }
+}
+
+// TOKEN CATEGORY
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, EnumIter, EnumCount, Debug)]
+#[repr(usize)]
+#[derive(TryFromPrimitive)]
+pub(crate) enum TokenCategory {
+    Building,
+    Pop,
+}
+
+pub(crate) struct TokenType {
+    pub tag: &'static str,
+    pub name: &'static str,
+    pub category: TokenCategory,
+    pub demand: SecondaryMap<GoodId, f64>,
+    pub supply: SecondaryMap<GoodId, f64>,
+    pub rgo_points: f64,
+}
+
+impl Tagged for TokenType {
+    fn tag(&self) -> &str {
+        self.tag
+    }
+}
+
+pub(crate) struct TokenData {
+    pub container: TokenContainerId,
+    pub typ: TokenTypeId,
+    pub size: i64,
+}
 
 impl Simulation {
     pub fn new() -> Simulation {
@@ -57,8 +174,8 @@ impl Simulation {
         sim
     }
 
-    pub fn tick(&mut self, request: TickRequest) -> crate::view::SimView {
-        crate::tick::tick(self, request)
+    pub fn tick(&mut self, request: TickRequest, arena: &Arena) -> crate::view::SimView {
+        crate::tick::tick(self, request, arena)
     }
 }
 
@@ -131,36 +248,6 @@ pub(crate) struct GoodData {
 }
 
 impl Tagged for GoodData {
-    fn tag(&self) -> &str {
-        self.tag
-    }
-}
-
-pub(crate) struct PopType {
-    pub tag: &'static str,
-    pub name: &'static str,
-    pub demand: SecondaryMap<GoodId, f64>,
-}
-
-impl Tagged for PopType {
-    fn tag(&self) -> &str {
-        self.tag
-    }
-}
-
-pub(crate) struct PopData {
-    pub typ: PopTypeId,
-    pub size: i64,
-}
-
-pub(crate) struct BuildingType {
-    pub tag: &'static str,
-    pub name: &'static str,
-    pub inputs: Tally<GoodId>,
-    pub outputs: Tally<GoodId>,
-}
-
-impl Tagged for BuildingType {
     fn tag(&self) -> &str {
         self.tag
     }
@@ -419,12 +506,6 @@ impl Sites {
     }
 }
 
-pub(crate) struct BuildingData {
-    pub typ: BuildingTypeId,
-    pub location: LocationId,
-    pub size: i64,
-}
-
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug, Default)]
 pub struct V2 {
     pub x: f32,
@@ -493,13 +574,13 @@ pub(crate) struct EntityData {
     pub agent: Option<AgentId>,
     pub party: Option<PartyId>,
     pub location: Option<LocationId>,
+    pub tokens: Option<TokenContainerId>,
 }
 pub(crate) struct LocationData {
+    pub entity: EntityId,
     pub site: SiteId,
     pub population: i64,
     pub prosperity: f64,
-    pub pops: BTreeSet<PopId>,
-    pub buildings: BTreeSet<BuildingId>,
     pub market: Market,
 }
 
@@ -510,11 +591,13 @@ pub(crate) struct MarketGood {
     pub supply: f64,
     pub demand: f64,
     pub consumed: f64,
+    pub satisfaction: f64,
 }
 
 pub(crate) struct Market {
     pub goods: SecondaryMap<GoodId, MarketGood>,
-    pub food: f64,
+    pub food_consumed: f64,
+    pub food_stockpile: f64,
     pub income: f64,
 }
 
@@ -533,7 +616,8 @@ impl Market {
                     )
                 })
                 .collect(),
-            food: 0.,
+            food_consumed: 0.,
+            food_stockpile: 0.,
             income: 0.,
         }
     }
@@ -738,6 +822,7 @@ fn init(sim: &mut Simulation) {
             tag: &'static str,
             name: &'static str,
             demand: &'static [(&'static str, f64)],
+            rgo_points: f64,
         }
 
         const DESCS: &[Desc] = &[
@@ -745,6 +830,7 @@ fn init(sim: &mut Simulation) {
                 tag: "paesants",
                 name: "Paesants",
                 demand: &[("wheat", 1.0), ("lumber", 0.1)],
+                rgo_points: 1.0,
             },
             Desc {
                 tag: "artisans",
@@ -755,19 +841,24 @@ fn init(sim: &mut Simulation) {
                     ("lumber", 0.1),
                     ("tools", 1.0),
                 ],
+                rgo_points: 0.,
             },
             Desc {
                 tag: "nobles",
                 name: "Nobles",
                 demand: &[("wheat", 1.0), ("meat", 1.0), ("lumber", 0.1)],
+                rgo_points: 0.,
             },
         ];
 
         for desc in DESCS {
-            sim.pop_types.insert(PopType {
+            sim.tokens.define_type(TokenType {
                 tag: desc.tag,
                 name: desc.name,
+                category: TokenCategory::Pop,
+                supply: Default::default(),
                 demand: parse_tally_sm(&sim.good_types, desc.demand, "goods"),
+                rgo_points: desc.rgo_points,
             });
         }
     }
@@ -803,13 +894,13 @@ fn init(sim: &mut Simulation) {
         ];
 
         for desc in DESCS {
-            let inputs = parse_tally(&sim.good_types, desc.inputs, "good");
-            let outputs = parse_tally(&sim.good_types, desc.inputs, "good");
-            sim.building_types.insert(BuildingType {
+            sim.tokens.define_type(TokenType {
                 tag: desc.tag,
                 name: desc.name,
-                inputs,
-                outputs,
+                category: TokenCategory::Building,
+                supply: parse_tally_sm(&sim.good_types, desc.inputs, "goods"),
+                demand: parse_tally_sm(&sim.good_types, desc.outputs, "goods"),
+                rgo_points: 0.,
             });
         }
     }

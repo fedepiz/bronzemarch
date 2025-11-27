@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arrayvec = { workspace = true }
 float-ord = { workspace = true }
+num_enum = { workspace = true }
 pathfinding = { workspace = true }
 rand = { workspace = true }
 slotmap = { workspace = true }

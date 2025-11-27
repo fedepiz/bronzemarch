@@ -141,18 +141,22 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     format!("{:1.2}%", (location.prosperity * 100.0)),
                 );
 
-                entry.set("food", format!("{:1.1}", location.market.food));
+                entry.set(
+                    "food",
+                    format!(
+                        "{:1.1}/{:1.1}",
+                        location.market.food_consumed, location.market.food_stockpile
+                    ),
+                );
                 entry.set("income", format!("{:1.0}$", location.market.income));
 
-                let pops: Vec<_> = location
-                    .pops
-                    .iter()
-                    .map(|&pop_id| {
-                        let pop = &sim.pops[pop_id];
-                        let typ = &sim.pop_types[pop.typ];
+                let pops: Vec<_> = sim
+                    .tokens
+                    .all_tokens_of_category(entity.tokens.unwrap(), TokenCategory::Pop)
+                    .map(|tok| {
                         let mut obj = Object::new();
-                        obj.set("name", typ.name);
-                        obj.set("size", format!("{}", pop.size));
+                        obj.set("name", tok.typ.name);
+                        obj.set("size", format!("{}", tok.data.size));
                         obj
                     })
                     .collect();
