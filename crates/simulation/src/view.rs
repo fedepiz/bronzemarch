@@ -171,9 +171,30 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                         let typ = &sim.good_types[id];
                         entry.set("name", typ.name);
                         entry.set("stock", format!("{:1.1}", good.stock));
-                        entry.set("supply", format!("{:1.1}", good.supply));
-                        entry.set("demand", format!("{:1.1}", good.demand));
+                        {
+                            let mark = if good.stock_delta >= 0. { "+" } else { "" };
+                            entry.set("stock_delta", format!("{mark}{:1.1}", good.stock_delta));
+                        }
+
+                        entry.set("supply_effective", format!("{:1.1}", good.supply_effective));
+                        entry.set("supply_base", format!("{:1.1}", good.supply_base));
+                        entry.set(
+                            "supply_from_stock",
+                            format!("{:1.1}", good.supply_from_stock),
+                        );
+
+                        entry.set("satisfaction", format!("{:1.1}%", good.satisfaction * 100.));
+
+                        entry.set("demand_effective", format!("{:1.1}", good.demand_effective));
+                        entry.set("demand_base", format!("{:1.1}", good.demand_base));
+
                         entry.set("price", format!("{:1.2}$", good.price));
+                        entry.set("target_price", format!("{:1.2}$", good.target_price));
+                        {
+                            let price_delta = good.target_price - good.price;
+                            let mark = if price_delta >= 0. { "+" } else { "" };
+                            entry.set("price_delta", format!("{mark}{price_delta:1.2}$"));
+                        }
                         entry
                     })
                     .collect();

@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-
 use num_enum::TryFromPrimitive;
 use slotmap::*;
+use std::collections::*;
 use strum::{EnumCount, EnumIter};
-use util::arena::{self, Arena, ArenaSafe};
+use util::arena::*;
 use util::hierarchy::Hierarchy;
 use util::tally::Tally;
 
@@ -587,9 +586,14 @@ pub(crate) struct LocationData {
 #[derive(Default)]
 pub(crate) struct MarketGood {
     pub stock: f64,
+    pub stock_delta: f64,
+    pub target_price: f64,
     pub price: f64,
-    pub supply: f64,
-    pub demand: f64,
+    pub supply_base: f64,
+    pub supply_from_stock: f64,
+    pub supply_effective: f64,
+    pub demand_base: f64,
+    pub demand_effective: f64,
     pub consumed: f64,
     pub satisfaction: f64,
 }
@@ -611,6 +615,7 @@ impl Market {
                         id,
                         MarketGood {
                             price: typ.price,
+                            target_price: typ.price,
                             ..Default::default()
                         },
                     )

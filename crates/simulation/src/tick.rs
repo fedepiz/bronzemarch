@@ -153,59 +153,91 @@ fn tick_location_economy(
         for tok in tokens {
             let size = tok.data.size as f64;
             for (good_id, &amt) in &tok.typ.demand {
-                new_market.goods[good_id].demand += amt * size * GOODS_SCALE;
+                new_market.goods[good_id].demand_base += amt * size * GOODS_SCALE;
             }
             for (good_id, &amt) in &tok.typ.supply {
-                new_market.goods[good_id].supply += amt * size * GOODS_SCALE;
+                new_market.goods[good_id].supply_base += amt * size * GOODS_SCALE;
             }
             rgo_points += tok.typ.rgo_points * size;
         }
-
         // Calculate RGO production
-        let rgo = &sites[location.site].rgo;
-        let num_workers = rgo_points.floor().min(rgo.capacity as f64);
+        {
+            let rgo = &sites[location.site].rgo;
+            let num_workers = rgo_points.floor().min(rgo.capacity as f64);
 
-        let mut value_of_rgo_production = 0.0;
+            let mut value_of_rgo_production = 0.0;
 
-        for (good_id, rate) in rgo.rates.iter() {
-            let produced = rate * num_workers * GOODS_SCALE;
-            let price = location.market.goods[good_id].price;
-            value_of_rgo_production += price * produced;
-            new_market.goods[good_id].supply += produced;
+            for (good_id, rate) in rgo.rates.iter() {
+                let produced = rate * num_workers * GOODS_SCALE;
+                let price = location.market.goods[good_id].price;
+                value_of_rgo_production += price * produced;
+                new_market.goods[good_id].supply_base += produced;
+
+                // Add a proportion of the stock to the effective supply
+                const STOCK_SUPPLY_BONUS: f64 = 0.05;
+                let from_stock = location.market.goods[good_id].stock * STOCK_SUPPLY_BONUS;
+                new_market.goods[good_id].supply_from_stock += from_stock;
+            }
+
+            new_market.income += value_of_rgo_production;
+        }
+
+        {
+            // Calculate effective supply and demand (used for pricing)
+            for good_id in good_types.keys() {
+                let good_data = &mut new_market.goods[good_id];
+                good_data.supply_effective += good_data.supply_base;
+                good_data.supply_effective += good_data.supply_from_stock;
+
+                good_data.demand_effective += good_data.demand_base;
+            }
         }
 
         // Update good prices and stock
         for (good_id, good_type) in good_types {
             let new_good = &mut new_market.goods[good_id];
-            let sd_modifier = {
-                let numerator = new_good.demand - new_good.supply;
-                let denominator = new_good.supply.max(new_good.demand).max(0.1);
-                (numerator / denominator).clamp(-0.75, 0.75)
-            };
-            let prosperity_modifier = location.prosperity.max(0.);
-            let target_price = good_type.price * (1. + sd_modifier) * (1. + prosperity_modifier);
-            let current_price = location.market.goods[good_id].price;
-            let new_price = lerp_f64(current_price, target_price, 0.9);
 
-            new_good.price = new_price;
+            // Price calculations
+            {
+                let sd_modifier = {
+                    let numerator = new_good.demand_base - new_good.supply_effective;
+                    let denominator = new_good
+                        .supply_effective
+                        .max(new_good.demand_effective)
+                        .max(0.1);
+                    (numerator / denominator).clamp(-0.75, 0.75)
+                };
+                let prosperity_modifier = location.prosperity.max(0.);
+                let target_price =
+                    good_type.price * (1. + sd_modifier) * (1. + prosperity_modifier);
+                let current_price = location.market.goods[good_id].price;
+                const PRICE_CONVERGENCE_SPEED: f64 = 0.05;
+                let new_price = lerp_f64(current_price, target_price, PRICE_CONVERGENCE_SPEED);
 
-            let prev_stock = location.market.goods[good_id].stock;
-            let available = prev_stock + new_good.supply;
-            new_good.consumed = available.min(new_good.demand);
-            new_good.satisfaction = if new_good.demand <= 0.0 {
-                1.0
-            } else {
-                new_good.consumed / new_good.demand
-            };
+                new_good.target_price = target_price;
+                new_good.price = new_price;
+            }
 
-            let max_stock = location.population as f64 * GOODS_SCALE * 10.0;
-            new_good.stock = (available - new_good.consumed).clamp(0.0, max_stock);
+            // Handle stock
+            {
+                let prev_stock = location.market.goods[good_id].stock;
+                let available = prev_stock + new_good.supply_base;
+                new_good.consumed = available.min(new_good.demand_base);
+                new_good.satisfaction = if new_good.demand_base <= 0.0 {
+                    1.0
+                } else {
+                    (new_good.consumed / new_good.demand_base).min(1.)
+                };
 
+                let max_stock = location.population as f64 * GOODS_SCALE * 10.0;
+                new_good.stock = (available - new_good.consumed).clamp(0.0, max_stock);
+                new_good.stock_delta = new_good.stock - prev_stock;
+            }
+
+            // Food
             new_market.food_consumed += new_good.consumed * good_type.food_rate;
             new_market.food_stockpile += new_good.stock * good_type.food_rate;
         }
-
-        new_market.income = value_of_rgo_production;
 
         // Update market proper
         location.market = new_market;

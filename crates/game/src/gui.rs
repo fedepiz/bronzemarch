@@ -72,17 +72,51 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
 
                 ui.separator();
                 ui.heading("Pops");
-                let table = [("Name", "name"), ("Size", "size")];
+                let table = [
+                    Row {
+                        label: "Name",
+                        primary: "name",
+                        tooltip: &[],
+                    },
+                    Row {
+                        label: "Size",
+                        primary: "size",
+                        tooltip: &[],
+                    },
+                ];
                 rows_table(ui, "pop_grid", &table, obj.list("pops"));
 
                 ui.separator();
                 ui.heading("Market");
                 let table = [
-                    ("Name", "name"),
-                    ("Stock", "stock"),
-                    ("Supply", "supply"),
-                    ("Demand", "demand"),
-                    ("Price", "price"),
+                    Row {
+                        label: "Name",
+                        primary: "name",
+                        tooltip: &[],
+                    },
+                    Row {
+                        label: "Stock",
+                        primary: "stock",
+                        tooltip: &[("Change", "stock_delta")],
+                    },
+                    Row {
+                        label: "Supply",
+                        primary: "supply_effective",
+                        tooltip: &[
+                            ("Base", "supply_base"),
+                            ("From stockpile", "supply_from_stock"),
+                        ],
+                    },
+                    Row {
+                        label: "Demand",
+                        primary: "demand_effective",
+                        tooltip: &[("Base", "demand_base"), ("Satisfaction", "satisfaction")],
+                    },
+                    Row {
+                        label: "Price",
+                        primary: "price",
+                        tooltip: &[("Target", "target_price"), ("Change", "price_delta")],
+                    },
                 ];
                 rows_table(ui, "market-grid", &table, obj.list("market_goods"));
             }
@@ -101,15 +135,29 @@ fn field_table(ui: &mut egui::Ui, grid_id: &str, table: &[(&str, &str)], obj: &O
     });
 }
 
-fn rows_table(ui: &mut egui::Ui, grid_id: &str, table: &[(&str, &str)], list: &[Object]) {
+struct Row<'a> {
+    label: &'a str,
+    primary: &'a str,
+    tooltip: &'a [(&'a str, &'a str)],
+}
+
+fn rows_table(ui: &mut egui::Ui, grid_id: &str, table: &[Row], list: &[Object]) {
     egui::Grid::new(grid_id).striped(true).show(ui, |ui| {
-        for &(txt, _) in table {
-            ui.label(txt);
+        for row in table {
+            ui.label(row.label);
         }
         ui.end_row();
         for obj in list {
-            for (_, field) in table {
-                ui.label(obj.txt(field));
+            for row in table {
+                let primary = obj.txt(row.primary);
+                let response = ui.label(primary);
+                if !row.tooltip.is_empty() {
+                    response.on_hover_ui(|ui| {
+                        ui.heading(format!("{} {}", row.label, primary));
+                        ui.separator();
+                        field_table(ui, "hover-grid", row.tooltip, obj);
+                    });
+                }
             }
             ui.end_row();
         }
