@@ -101,19 +101,11 @@ fn parse_tally_sm<K: Key, T: Tagged>(
     out
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct GoodPopDemand {
-    pub amount: f64,
-    pub low_prosperity: f64,
-    pub high_propserity: f64,
-}
-
 pub(crate) struct GoodData {
     pub tag: &'static str,
     pub name: &'static str,
     pub price: f64,
     pub food_rate: f64,
-    pub demand: &'static [GoodPopDemand],
 }
 
 impl Tagged for GoodData {
@@ -634,7 +626,6 @@ fn init(sim: &mut Simulation) {
             name: &'a str,
             price: f64,
             food_rate: f64,
-            demand: &'a [GoodPopDemand],
         }
 
         const DESCS: &[Desc] = &[
@@ -643,40 +634,24 @@ fn init(sim: &mut Simulation) {
                 name: "Wheat",
                 price: 10.,
                 food_rate: 1.0,
-                demand: &[GoodPopDemand {
-                    amount: 1.0,
-                    low_prosperity: 0.0,
-                    high_propserity: 0.0,
-                }],
             },
             Desc {
                 tag: "meat",
                 name: "Meat",
                 price: 10.,
                 food_rate: 1.,
-                demand: &[],
             },
             Desc {
                 tag: "lumber",
                 name: "Lumber",
                 price: 10.,
                 food_rate: 0.0,
-                demand: &[GoodPopDemand {
-                    amount: 1.0,
-                    low_prosperity: 0.0,
-                    high_propserity: 0.0,
-                }],
             },
             Desc {
                 tag: "tools",
                 name: "Tools",
                 price: 20.,
                 food_rate: 0.0,
-                demand: &[GoodPopDemand {
-                    amount: 0.1,
-                    low_prosperity: 0.0,
-                    high_propserity: 0.0,
-                }],
             },
         ];
 
@@ -686,7 +661,6 @@ fn init(sim: &mut Simulation) {
                 name: desc.name,
                 price: desc.price,
                 food_rate: desc.food_rate,
-                demand: desc.demand,
             });
         }
     }
