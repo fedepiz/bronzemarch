@@ -243,23 +243,27 @@ fn init_sim(sim: &mut Simulation, arena: &Arena) {
             _ => panic!(),
         };
 
-        let pops: &[CreatePop] = match desc.kind {
-            "village" => &[CreatePop {
+        let tokens: &[CreateToken] = match desc.kind {
+            "village" => &[CreateToken {
                 tag: "paesants",
                 size: 5_000,
             }],
             "town" => &[
-                CreatePop {
+                CreateToken {
                     tag: "paesants",
                     size: 7_500,
                 },
-                CreatePop {
+                CreateToken {
                     tag: "artisans",
                     size: 1_000,
                 },
-                CreatePop {
+                CreateToken {
                     tag: "nobles",
                     size: 200,
+                },
+                CreateToken {
+                    tag: "toolmaker",
+                    size: 1,
                 },
             ],
             _ => &[],
@@ -271,7 +275,7 @@ fn init_sim(sim: &mut Simulation, arena: &Arena) {
             settlement_kind: desc.kind,
             faction: "rheged",
             prosperity,
-            pops,
+            tokens,
         });
     }
 

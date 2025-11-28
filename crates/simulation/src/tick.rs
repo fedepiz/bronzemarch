@@ -145,39 +145,65 @@ fn tick_location_economy(
             continue;
         }
 
-        const GOODS_SCALE: f64 = 0.01;
+        const GOODS_POPULATION_SCALE: f64 = 0.01;
 
         let mut new_market = Market::new(good_types);
 
-        // Calculate demand
-        let mut rgo_points = 0.0;
-        for tok in tokens {
-            let size = tok.data.size as f64;
-            for (good_id, &amt) in &tok.typ.demand {
-                new_market.goods[good_id].demand_base += amt * size * GOODS_SCALE;
+        // Calculate token contributions
+        let mut rgo_work_points = 0.0;
+        {
+            let mut value_of_token_production = 0.0;
+            let mut value_of_token_consumption = 0.0;
+
+            for tok in tokens {
+                let (scale, is_commerical) = match tok.typ.category {
+                    TokenCategory::Building => (1., true),
+                    TokenCategory::Pop => (GOODS_POPULATION_SCALE, false),
+                };
+
+                let size = tok.data.size as f64 * scale;
+
+                for (good_id, &amt) in &tok.typ.demand {
+                    let amount = amt * size;
+                    let price = amount * location.market.goods[good_id].price;
+                    let value = amount * price;
+                    if is_commerical {
+                        value_of_token_consumption += value;
+                    }
+
+                    new_market.goods[good_id].demand_base += amount;
+                }
+
+                for (good_id, &amt) in &tok.typ.supply {
+                    let amount = amt * size;
+                    let price = amount * location.market.goods[good_id].price;
+                    let value = amount * price;
+
+                    if is_commerical {
+                        value_of_token_production += value;
+                    }
+
+                    new_market.goods[good_id].supply_base += amount;
+                }
+                rgo_work_points += tok.typ.rgo_points * size;
             }
-            for (good_id, &amt) in &tok.typ.supply {
-                new_market.goods[good_id].supply_base += amt * size * GOODS_SCALE;
-            }
-            rgo_points += tok.typ.rgo_points * size;
+
+            new_market.income += value_of_token_production;
+            new_market.income -= value_of_token_consumption;
         }
+
         // Calculate RGO production
         {
             let rgo = &sites[location.site].rgo;
-            let num_workers = rgo_points.floor().min(rgo.capacity as f64);
+            let num_workers = rgo_work_points.floor().min(rgo.capacity as f64);
 
             let mut value_of_rgo_production = 0.0;
 
             for (good_id, rate) in rgo.rates.iter() {
-                let produced = rate * num_workers * GOODS_SCALE;
+                let produced = rate * num_workers;
                 let price = location.market.goods[good_id].price;
                 value_of_rgo_production += price * produced;
                 new_market.goods[good_id].supply_base += produced;
-
-                // Add a proportion of the stock to the effective supply
-                const STOCK_SUPPLY_BONUS: f64 = 0.05;
-                let from_stock = location.market.goods[good_id].stock * STOCK_SUPPLY_BONUS;
-                new_market.goods[good_id].supply_from_stock += from_stock;
             }
 
             new_market.income += value_of_rgo_production;
@@ -191,6 +217,11 @@ fn tick_location_economy(
                 good_data.supply_effective += good_data.supply_from_stock;
 
                 good_data.demand_effective += good_data.demand_base;
+
+                // Add a proportion of the stock to the effective supply
+                const STOCK_SUPPLY_BONUS: f64 = 0.05;
+                let from_stock = location.market.goods[good_id].stock * STOCK_SUPPLY_BONUS;
+                good_data.supply_from_stock += from_stock;
             }
         }
 
@@ -230,7 +261,7 @@ fn tick_location_economy(
                     (new_good.consumed / new_good.demand_base).min(1.)
                 };
 
-                let max_stock = location.population as f64 * GOODS_SCALE * 10.0;
+                let max_stock = location.population as f64 * GOODS_POPULATION_SCALE * 10.0;
                 new_good.stock = (available - new_good.consumed).clamp(0.0, max_stock);
                 new_good.stock_delta = new_good.stock - prev_stock;
             }
@@ -427,7 +458,7 @@ struct CreateEntity<'a> {
     agent: Option<CreateAgent<'a>>,
     location: Option<CreateLocation<'a>>,
     party: Option<CreateParty<'a>>,
-    has_tokens: bool,
+    tokens: Option<&'a [CreateToken<'a>]>,
 }
 
 struct CreateAgent<'a> {
@@ -436,7 +467,7 @@ struct CreateAgent<'a> {
     political_parent: Option<&'a str>,
 }
 
-pub struct CreatePop<'a> {
+pub struct CreateToken<'a> {
     pub tag: &'a str,
     pub size: i64,
 }
@@ -444,7 +475,6 @@ pub struct CreatePop<'a> {
 struct CreateLocation<'a> {
     site: &'a str,
     prosperity: f64,
-    pops: &'a [CreatePop<'a>],
 }
 
 struct CreateParty<'a> {
@@ -466,7 +496,7 @@ pub struct CreateLocationParams<'a> {
     pub faction: &'a str,
     pub settlement_kind: &'a str,
     pub prosperity: f64,
-    pub pops: &'a [CreatePop<'a>],
+    pub tokens: &'a [CreateToken<'a>],
 }
 
 pub struct CreatePersonParams<'a> {
@@ -499,10 +529,9 @@ impl<'a> TickCommands<'a> {
                 flags: &[],
                 political_parent: Some(params.faction),
             }),
-            has_tokens: true,
+            tokens: Some(params.tokens),
             location: Some(CreateLocation {
                 site: params.site,
-                pops: params.pops,
                 prosperity: params.prosperity,
             }),
             party: Some(CreateParty {
@@ -558,11 +587,21 @@ fn process_entity_create_commands<'a>(
             ..Default::default()
         });
 
-        let tokens = if command.has_tokens {
-            Some(sim.tokens.add_container())
-        } else {
-            None
-        };
+        let tokens = command.tokens.map(|cmds| {
+            let container = sim.tokens.add_container();
+            for create in cmds {
+                match sim.tokens.types.lookup(create.tag) {
+                    Some(typ) => {
+                        sim.tokens.add_token(container, typ, create.size);
+                    }
+                    None => {
+                        println!("Unknown token type '{}'", create.tag);
+                        continue;
+                    }
+                }
+            }
+            container
+        });
 
         let agent = command.agent.map(|args| {
             let id = sim.agents.insert(AgentData {
@@ -599,20 +638,6 @@ fn process_entity_create_commands<'a>(
                 market: Market::new(&sim.good_types),
             });
             sim.sites.bind_location(site, location);
-
-            for create_pop in args.pops {
-                let tokens = tokens.unwrap();
-
-                match sim.tokens.types.lookup(create_pop.tag) {
-                    Some(typ) => {
-                        sim.tokens.add_token(tokens, typ, create_pop.size);
-                    }
-                    None => {
-                        println!("Unknown pop type '{}'", create_pop.tag);
-                        continue;
-                    }
-                }
-            }
 
             Some(location)
         });

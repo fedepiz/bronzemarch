@@ -738,7 +738,7 @@ fn init(sim: &mut Simulation) {
                 tag: "toolmaker",
                 name: "Toolmaker",
                 inputs: &[("lumber", 10.)],
-                outputs: &[("tools", 10.)],
+                outputs: &[("tools", 100.)],
             },
         ];
 
@@ -747,8 +747,8 @@ fn init(sim: &mut Simulation) {
                 tag: desc.tag,
                 name: desc.name,
                 category: TokenCategory::Building,
-                supply: parse_tally_sm(&sim.good_types, desc.inputs, "goods"),
-                demand: parse_tally_sm(&sim.good_types, desc.outputs, "goods"),
+                demand: parse_tally_sm(&sim.good_types, desc.inputs, "goods"),
+                supply: parse_tally_sm(&sim.good_types, desc.outputs, "goods"),
                 rgo_points: 0.,
             });
         }

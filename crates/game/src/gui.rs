@@ -70,21 +70,28 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
                 ];
                 field_table(ui, "location-table", &table, obj);
 
-                ui.separator();
-                ui.heading("Pops");
-                let table = [
-                    Row {
-                        label: "Name",
-                        primary: "name",
-                        tooltip: &[],
-                    },
-                    Row {
-                        label: "Size",
-                        primary: "size",
-                        tooltip: &[],
-                    },
-                ];
-                rows_table(ui, "pop_grid", &table, obj.list("pops"));
+                {
+                    let tokens_table = [
+                        Row {
+                            label: "Name",
+                            primary: "name",
+                            tooltip: &[],
+                        },
+                        Row {
+                            label: "Size",
+                            primary: "size",
+                            tooltip: &[],
+                        },
+                    ];
+
+                    ui.separator();
+                    ui.heading("Pops");
+                    rows_table(ui, "pop_grid", &tokens_table, obj.list("pops"));
+
+                    ui.separator();
+                    ui.heading("Buildings");
+                    rows_table(ui, "building_grid", &tokens_table, obj.list("buildings"));
+                }
 
                 ui.separator();
                 ui.heading("Market");
@@ -143,6 +150,10 @@ struct Row<'a> {
 
 fn rows_table(ui: &mut egui::Ui, grid_id: &str, table: &[Row], list: &[Object]) {
     egui::Grid::new(grid_id).striped(true).show(ui, |ui| {
+        if list.is_empty() {
+            ui.label("Empty...");
+            return;
+        }
         for row in table {
             ui.label(row.label);
         }

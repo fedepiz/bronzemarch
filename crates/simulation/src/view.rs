@@ -163,6 +163,18 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                     .collect();
                 entry.set("pops", pops);
 
+                let buildings: Vec<_> = sim
+                    .tokens
+                    .all_tokens_of_category(entity.tokens.unwrap(), TokenCategory::Building)
+                    .map(|tok| {
+                        let mut obj = Object::new();
+                        obj.set("name", tok.typ.name);
+                        obj.set("size", format!("{}", tok.data.size));
+                        obj
+                    })
+                    .collect();
+                entry.set("buildings", buildings);
+
                 let market_goods: Vec<_> = location
                     .market
                     .goods
