@@ -6,6 +6,7 @@ use util::hierarchy::Hierarchy;
 use util::tally::Tally;
 
 use crate::date::Date;
+use crate::sites::*;
 use crate::tick::TickRequest;
 use crate::tokens::*;
 
@@ -247,126 +248,6 @@ pub(crate) fn query_related_agent(
 
     Some((target, target_data))
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Debug, Hash)]
-pub(crate) struct SiteId(usize);
-
-#[derive(Default)]
-pub(crate) struct SiteRGO {
-    pub rates: Tally<GoodId>,
-    pub capacity: i64,
-}
-
-#[derive(Default)]
-pub(crate) struct SiteData {
-    pub tag: String,
-    pub pos: V2,
-    pub neighbours: Vec<(SiteId, f32)>,
-    pub location: Option<LocationId>,
-    pub rgo: SiteRGO,
-}
-
-#[derive(Default)]
-pub(crate) struct Sites {
-    entries: Vec<SiteData>,
-    distances: BTreeMap<(SiteId, SiteId), f32>,
-}
-
-impl std::ops::Index<SiteId> for Sites {
-    type Output = SiteData;
-
-    fn index(&self, index: SiteId) -> &Self::Output {
-        &self.entries[index.0]
-    }
-}
-
-impl Sites {
-    pub fn define(&mut self, tag: impl Into<String>, pos: V2, rgo: SiteRGO) -> SiteId {
-        let id = SiteId(self.entries.len());
-        self.entries.push(SiteData {
-            tag: tag.into(),
-            pos,
-            neighbours: vec![],
-            location: None,
-            rgo,
-        });
-        id
-    }
-
-    pub fn connect(&mut self, id1: SiteId, id2: SiteId) {
-        let distance = self.entries[id1.0].pos.distance(self.entries[id2.0].pos);
-        Self::insert_no_repeat(&mut self.entries[id1.0].neighbours, id2, distance);
-        Self::insert_no_repeat(&mut self.entries[id2.0].neighbours, id1, distance);
-
-        // Record distance
-        let min_id = id1.min(id2);
-        let max_id = id1.max(id2);
-        let p1 = self[min_id].pos;
-        let p2 = self[max_id].pos;
-        let distance = p1.distance(p2);
-        self.distances.insert((min_id, max_id), distance);
-    }
-
-    fn insert_no_repeat(vs: &mut Vec<(SiteId, f32)>, id: SiteId, distance: f32) {
-        if vs.iter().all(|x| x.0 != id) {
-            vs.push((id, distance));
-        }
-    }
-
-    pub fn lookup<'a>(&'a self, tag: &str) -> Option<(SiteId, &'a SiteData)> {
-        self.entries
-            .iter()
-            .enumerate()
-            .find(|(_, data)| data.tag.as_str() == tag)
-            .map(|(id, data)| (SiteId(id), data))
-    }
-
-    pub fn get(&self, id: SiteId) -> Option<&SiteData> {
-        self.entries.get(id.0)
-    }
-
-    pub fn bind_location(&mut self, id: SiteId, location: LocationId) {
-        if let Some(site) = self.entries.get_mut(id.0) {
-            assert!(site.location.is_none());
-            site.location = Some(location);
-        }
-    }
-
-    pub fn iter<'a>(
-        &'a self,
-    ) -> impl Iterator<Item = (SiteId, &'a SiteData)> + ExactSizeIterator + use<'a> {
-        self.entries
-            .iter()
-            .enumerate()
-            .map(|(idx, data)| (SiteId(idx), data))
-    }
-
-    pub fn neighbours(&self, id: SiteId) -> &[(SiteId, f32)] {
-        &self.entries[id.0].neighbours
-    }
-
-    pub fn greater_neighbours(&self, id: SiteId) -> impl Iterator<Item = SiteId> + use<'_> {
-        self.entries
-            .get(id.0)
-            .into_iter()
-            .flat_map(|data| data.neighbours.iter().copied())
-            .filter(move |&x| x.0 > id)
-            .map(|x| x.0)
-    }
-
-    pub fn distance(&self, id1: SiteId, id2: SiteId) -> f32 {
-        if id1 == id2 {
-            return 0.;
-        }
-        let a = id1.min(id2);
-        let b = id1.max(id2);
-        self.distances
-            .get(&(a, b))
-            .copied()
-            .unwrap_or(f32::INFINITY)
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug, Default)]
 pub struct V2 {
     pub x: f32,
@@ -443,14 +324,20 @@ pub(crate) struct LocationData {
     pub population: i64,
     pub prosperity: f64,
     pub market: Market,
+    pub influence_sources: Vec<InfluenceSource>,
+}
+
+pub(crate) struct InfluenceSource {
+    pub kind: InfluenceKind,
+    pub population_modifier: f64,
 }
 
 #[derive(Default)]
 pub(crate) struct MarketGood {
     pub stock: f64,
     pub stock_delta: f64,
-    pub target_price: f64,
     pub price: f64,
+    pub target_price: f64,
     pub supply_base: f64,
     pub supply_from_stock: f64,
     pub supply_effective: f64,
@@ -558,6 +445,42 @@ impl GridCoord {
             (Self::Between(a1, b1, _), Self::Between(a2, b2, _)) => a1 == a2 && b1 == b2,
         }
     }
+
+    pub fn as_colinear(p1: Self, p2: Self) -> Option<ColinearPair> {
+        let (a1, b1, t1) = p1.as_triple();
+        let (a2, b2, t2) = p2.as_triple();
+        let start = a1.min(a2);
+        let end = b1.max(b2);
+
+        let mut num_differences = 0;
+        if a1 != a2 {
+            num_differences += 1
+        }
+        if b1 != b2 {
+            num_differences += 1
+        }
+
+        if a1 == b1 && a2 == b2 {
+            // Both are endpoitns, we don't care about differences
+            num_differences = 0;
+        }
+
+        if num_differences > 1 {
+            return None;
+        }
+
+        let t1 = if a1 == end { 1.0 } else { t1 };
+        let t2 = if a2 == end { 1.0 } else { t2 };
+        Some(ColinearPair { start, end, t1, t2 })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ColinearPair {
+    pub start: SiteId,
+    pub end: SiteId,
+    pub t1: f32,
+    pub t2: f32,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -760,26 +683,29 @@ fn init(sim: &mut Simulation) {
             pos: (f32, f32),
             rgo: &'static [(&'static str, f64)],
         }
+
+        const NORMAL_COUNTRYSIDE_RGO: &[(&str, f64)] = &[("wheat", 1.2), ("lumber", 0.5)];
+
         const DESCS: &[Desc] = &[
             Desc {
                 tag: "caer_ligualid",
                 pos: (0., 0.),
-                rgo: &[("wheat", 1.2), ("lumber", 0.5)],
+                rgo: NORMAL_COUNTRYSIDE_RGO,
             },
             Desc {
                 tag: "din_drust",
-                pos: (-6., -9.),
-                rgo: &[("wheat", 1.2), ("lumber", 0.5)],
+                pos: (-7., -9.),
+                rgo: NORMAL_COUNTRYSIDE_RGO,
             },
             Desc {
                 tag: "anava",
-                pos: (7., -3.),
+                pos: (7., -5.),
                 rgo: &[("wheat", 1.6)],
             },
             Desc {
                 tag: "llan_heledd",
                 pos: (3., 12.),
-                rgo: &[("wheat", 1.2), ("lumber", 0.5)],
+                rgo: NORMAL_COUNTRYSIDE_RGO,
             },
             Desc {
                 tag: "caer_ligualid-din_drust",
@@ -791,7 +717,28 @@ fn init(sim: &mut Simulation) {
                 pos: (0., 8.),
                 rgo: &[],
             },
+            Desc {
+                tag: "isura",
+                pos: (-13., -8.),
+                rgo: NORMAL_COUNTRYSIDE_RGO,
+            },
+            Desc {
+                tag: "isura_west",
+                pos: (-19.5, -10.),
+                rgo: &[],
+            },
+            Desc {
+                tag: "din_rheged",
+                pos: (-25., -8.4),
+                rgo: NORMAL_COUNTRYSIDE_RGO,
+            },
+            Desc {
+                tag: "ad_candidam_casam",
+                pos: (-19., -6.2),
+                rgo: NORMAL_COUNTRYSIDE_RGO,
+            },
         ];
+
         for desc in DESCS {
             let rgo = SiteRGO {
                 rates: parse_tally(&sim.good_types, desc.rgo, "goods"),
@@ -807,6 +754,10 @@ fn init(sim: &mut Simulation) {
             ("caer_ligualid_south", "llan_heledd"),
             ("caer_ligualid", "caer_ligualid-din_drust"),
             ("din_drust", "caer_ligualid-din_drust"),
+            ("din_drust", "isura"),
+            ("isura", "isura_west"),
+            ("isura_west", "din_rheged"),
+            ("isura_west", "ad_candidam_casam"),
         ];
 
         for (tag1, tag2) in CONNECTIONS {

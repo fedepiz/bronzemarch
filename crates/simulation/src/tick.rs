@@ -1,10 +1,8 @@
-use rand::SeedableRng;
-use rand::rngs::SmallRng;
 use util::arena::Arena;
 
-use crate::date::Date;
 use crate::object::*;
 use crate::simulation::*;
+use crate::sites::*;
 use crate::tokens::*;
 use crate::view;
 use crate::view::*;
@@ -17,21 +15,15 @@ pub struct TickRequest<'a> {
     pub objects_to_extract: Vec<ObjectId>,
 }
 
-fn key_rng<K: slotmap::Key>(date: Date, key: K) -> SmallRng {
-    let num = key.data().as_ffi();
-    let seed = date
-        .epoch()
-        .wrapping_mul(13)
-        .wrapping_add(num.wrapping_mul(17));
-    SmallRng::seed_from_u64(seed)
-}
-
 pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena) -> SimView {
     if request.advance_time {
         sim.date.advance();
 
         let tick_market = sim.date.is_new_day();
 
+        tick_influences(arena, &mut sim.sites, &sim.locations);
+
+        // Simulate economy at locations
         tick_location_economy(
             arena,
             &sim.entities,
@@ -42,10 +34,12 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena
             tick_market,
         );
 
+        // Apply movement order
         if let Some((subject, target)) = request.commands.move_to {
             apply_move_order_to(sim, subject, target);
         }
 
+        // Tick party AI (deciding where to go)
         let result = tick_party_ai(sim);
         for update in result {
             let movement = &mut sim.parties[update.id].movement;
@@ -82,11 +76,13 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena
         }
     }
 
+    // Create entities
     {
         let cmds = request.commands.create_entity_cmds.drain(..);
         process_entity_create_commands(sim, cmds);
     }
 
+    // Extract view
     let mut view = SimView::default();
     view.map_items = view::map_view_items(sim, request.map_viewport);
     view.map_lines = view::map_view_lines(sim, request.map_viewport);
@@ -116,6 +112,35 @@ fn apply_move_order_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId
         _ => None,
     };
     sim.parties[subject].movement.target = target;
+}
+
+fn tick_influences(arena: &Arena, sites: &mut Sites, locations: &Locations) {
+    let mut sources = sites.make_secondary_map();
+
+    for (loc_id, location) in locations.iter() {
+        let mut influences = arena.new_vec();
+
+        for source in &location.influence_sources {
+            let mut power = 0;
+
+            // Add in population weight
+            power += (source.population_modifier * location.population as f64).round() as i64;
+
+            if power > 0 {
+                influences.push((
+                    InfluenceType {
+                        kind: source.kind,
+                        location: loc_id,
+                    },
+                    power as i32,
+                ));
+            }
+        }
+        let prev = sources.insert(location.site, influences.into_bump_slice());
+        assert!(prev.is_none())
+    }
+
+    crate::sites::propagate_influences(arena, sites, &sources);
 }
 
 fn tick_location_economy(
@@ -243,7 +268,7 @@ fn tick_location_economy(
                 let target_price =
                     good_type.price * (1. + sd_modifier) * (1. + prosperity_modifier);
                 let current_price = location.market.goods[good_id].price;
-                const PRICE_CONVERGENCE_SPEED: f64 = 0.05;
+                const PRICE_CONVERGENCE_SPEED: f64 = 0.1;
                 let new_price = lerp_f64(current_price, target_price, PRICE_CONVERGENCE_SPEED);
 
                 new_good.target_price = target_price;
@@ -335,23 +360,8 @@ fn pathfind(parties: &Parties, sites: &Sites) -> Vec<(PartyId, ChangePath)> {
                 } else {
                     let start_node = current_pos.closest_endpoint();
                     let end_node = destination.closest_endpoint();
-                    let end_v2 = sites.get(end_node).unwrap().pos;
 
-                    fn metric(x: f32) -> i64 {
-                        (x * 1000.).round() as i64
-                    }
-
-                    let steps = pathfinding::directed::astar::astar(
-                        &start_node,
-                        |&site| sites.neighbours(site).iter().map(|&(s, d)| (s, metric(d))),
-                        |&site| {
-                            let site_v2 = sites.get(site).unwrap().pos;
-                            metric(end_v2.distance(site_v2))
-                        },
-                        |&site| site == end_node,
-                    )
-                    .map(|x| x.0)
-                    .unwrap_or_default();
+                    let steps = sites.astar(start_node, end_node).unwrap_or_default().0;
 
                     // Construct path
                     let mut path = Vec::with_capacity(steps.len() + 1);
@@ -390,16 +400,14 @@ fn move_to_next_coord(parties: &Parties, sites: &Sites) -> Vec<Movement> {
                 .path
                 .beginning()
                 .map(|destination| {
-                    // While we have many possible combinations, there can be at most
-                    // 2 relevant nodes.
-                    let (a1, b1, t1) = party_data.position.as_triple();
-                    let (a2, b2, t2) = destination.as_triple();
-                    // Get the actual start and end point
-                    let start = a1.min(a2);
-                    let end = b1.max(b2);
-                    // Adjust the current and end t
-                    let current_t = if a1 == end { 1.0 } else { t1 };
-                    let end_t = if a2 == end { 1.0 } else { t2 };
+                    // We are guaranteed colinearity by construction of the path
+                    let ColinearPair {
+                        start,
+                        end,
+                        t1: current_t,
+                        t2: end_t,
+                    } = GridCoord::as_colinear(party_data.position, destination).unwrap();
+
                     // Get the actual distance between the two
                     let t_direction = (end_t - current_t).signum();
                     let distance = sites.distance(start, end);
@@ -475,6 +483,7 @@ pub struct CreateToken<'a> {
 struct CreateLocation<'a> {
     site: &'a str,
     prosperity: f64,
+    is_town: bool,
 }
 
 struct CreateParty<'a> {
@@ -518,8 +527,13 @@ impl<'a> TickCommands<'a> {
     pub fn create_location(&mut self, params: CreateLocationParams<'a>) {
         let size = match params.settlement_kind {
             "town" => 2.5,
-            "village" => 2.,
+            "hillfort" => 2.,
+            "village" => 1.5,
             _ => 1.,
+        };
+        let is_town = match params.settlement_kind {
+            "town" => true,
+            _ => false,
         };
         self.create_entity_cmds.push(CreateEntity {
             name: params.name,
@@ -533,6 +547,7 @@ impl<'a> TickCommands<'a> {
             location: Some(CreateLocation {
                 site: params.site,
                 prosperity: params.prosperity,
+                is_town,
             }),
             party: Some(CreateParty {
                 site: params.site,
@@ -630,12 +645,22 @@ fn process_entity_create_commands<'a>(
                     return None;
                 }
             };
+            let mut influence_sources = vec![];
+
+            if args.is_town {
+                influence_sources.push(InfluenceSource {
+                    kind: InfluenceKind::Market,
+                    population_modifier: 1.,
+                });
+            }
+
             let location = sim.locations.insert(LocationData {
                 entity,
                 site,
                 population: 0,
                 prosperity: args.prosperity,
                 market: Market::new(&sim.good_types),
+                influence_sources,
             });
             sim.sites.bind_location(site, location);
 

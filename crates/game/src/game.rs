@@ -219,12 +219,27 @@ fn init_sim(sim: &mut Simulation, arena: &Arena) {
         Desc {
             name: "Din Drust",
             site: "din_drust",
-            kind: "village",
+            kind: "hillfort",
         },
         Desc {
             name: "Llan Heledd",
             site: "llan_heledd",
             kind: "village",
+        },
+        Desc {
+            name: "Isura",
+            site: "isura",
+            kind: "village",
+        },
+        Desc {
+            name: "Ad Candidam Casam",
+            site: "ad_candidam_casam",
+            kind: "village",
+        },
+        Desc {
+            name: "Din Rheged",
+            site: "din_rheged",
+            kind: "hillfort",
         },
     ];
 
@@ -239,6 +254,7 @@ fn init_sim(sim: &mut Simulation, arena: &Arena) {
     for desc in descs {
         let prosperity = match desc.kind {
             "town" => 0.4,
+            "hillfort" => 0.3,
             "village" => 0.3,
             _ => panic!(),
         };
@@ -248,6 +264,20 @@ fn init_sim(sim: &mut Simulation, arena: &Arena) {
                 tag: "paesants",
                 size: 5_000,
             }],
+            "hillfort" => &[
+                CreateToken {
+                    tag: "paesants",
+                    size: 5_000,
+                },
+                CreateToken {
+                    tag: "artisans",
+                    size: 100,
+                },
+                CreateToken {
+                    tag: "nobles",
+                    size: 50,
+                },
+            ],
             "town" => &[
                 CreateToken {
                     tag: "paesants",

@@ -203,16 +203,34 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
 
                         entry.set("price", format!("{:1.2}$", good.price));
                         entry.set("target_price", format!("{:1.2}$", good.target_price));
-                        {
-                            let price_delta = good.target_price - good.price;
-                            let mark = if price_delta >= 0. { "+" } else { "" };
-                            entry.set("price_delta", format!("{mark}{price_delta:1.2}$"));
-                        }
                         entry
                     })
                     .collect();
 
                 entry.set("market_goods", market_goods);
+
+                entry.set("influences", {
+                    let influences = &sim.sites[location.site].influences;
+                    influences
+                        .iter()
+                        .map(|(typ, amount)| {
+                            let mut obj = Object::new();
+                            obj.set(
+                                "kind",
+                                match typ.kind {
+                                    crate::sites::InfluenceKind::Market => "Market",
+                                },
+                            );
+                            {
+                                let entity = sim.locations[typ.location].entity;
+                                let name = &sim.entities[entity].name;
+                                obj.set("source", name);
+                            }
+                            obj.set("amount", format!("{amount}"));
+                            obj
+                        })
+                        .collect::<Vec<_>>()
+                });
 
                 obj.set("location", entry);
             }

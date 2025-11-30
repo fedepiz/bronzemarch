@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::{EntityId, SiteId};
+use crate::simulation::EntityId;
+use crate::sites::SiteId;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct ObjectId(pub(crate) ObjectHandle);

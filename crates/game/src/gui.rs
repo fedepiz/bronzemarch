@@ -85,12 +85,39 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
                     ];
 
                     ui.separator();
-                    ui.heading("Pops");
-                    rows_table(ui, "pop_grid", &tokens_table, obj.list("pops"));
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.heading("Pops");
+                            rows_table(ui, "pop_grid", &tokens_table, obj.list("pops"));
+                        });
 
-                    ui.separator();
-                    ui.heading("Buildings");
-                    rows_table(ui, "building_grid", &tokens_table, obj.list("buildings"));
+                        ui.vertical(|ui| {
+                            ui.heading("Buildings");
+                            rows_table(ui, "building_grid", &tokens_table, obj.list("buildings"));
+                        });
+
+                        ui.vertical(|ui| {
+                            ui.heading("Influences");
+                            let table = [
+                                Row {
+                                    label: "Kind",
+                                    primary: "kind",
+                                    tooltip: &[],
+                                },
+                                Row {
+                                    label: "Source",
+                                    primary: "source",
+                                    tooltip: &[],
+                                },
+                                Row {
+                                    label: "Amount",
+                                    primary: "amount",
+                                    tooltip: &[],
+                                },
+                            ];
+                            rows_table(ui, "influence_grid", &table, obj.list("influences"));
+                        })
+                    });
                 }
 
                 ui.separator();
@@ -122,7 +149,7 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
                     Row {
                         label: "Price",
                         primary: "price",
-                        tooltip: &[("Target", "target_price"), ("Change", "price_delta")],
+                        tooltip: &[("Target", "target_price")],
                     },
                 ];
                 rows_table(ui, "market-grid", &table, obj.list("market_goods"));
