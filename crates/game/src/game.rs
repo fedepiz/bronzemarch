@@ -2,7 +2,7 @@ use macroquad::prelude as mq;
 use simulation::*;
 use util::arena::Arena;
 
-use crate::{gui::WindowKind, *};
+use crate::{assets::Assets, gui::WindowKind, *};
 
 pub fn start() {
     let config = mq::Conf {
@@ -15,6 +15,8 @@ pub fn start() {
 }
 
 async fn amain() {
+    let assets = Assets::load().await.unwrap();
+
     let mut frame_arena = Arena::default();
 
     let mut sim = Simulation::new();
@@ -23,7 +25,7 @@ async fn amain() {
     let mut gui = gui::Gui::new();
     egui_macroquad::cfg(|ctx| gui.setup(ctx));
 
-    let mut board = board::Board::new(20.);
+    let mut board = board::Board::new(20., &assets);
     let mut selected_entity: Option<ObjectId> = None;
 
     let mut view = simulation::SimView::default();
@@ -157,9 +159,16 @@ fn populate_board(board: &mut board::Board, view: &SimView, selected_entity: Opt
 
         let font_size = if is_big { 24 } else { 18 };
 
+        let texture = if item.image.is_empty() {
+            None
+        } else {
+            Some(board.assets.texture(item.image))
+        };
+
         board.push_pawn(
             handle,
             name,
+            texture,
             pos,
             item.size,
             font_size,

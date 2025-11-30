@@ -1,27 +1,26 @@
-use std::io::Read;
-
 use macroquad::prelude as mq;
 
-pub(super) struct Board {
+use crate::assets::Assets;
+
+pub(super) struct Board<'a> {
+    pub assets: &'a Assets,
     camera: mq::Camera2D,
-    font: mq::Font,
     world_unit: f32,
     strings: Vec<String>,
     lines: Vec<Line>,
-    pawns: Vec<Pawn>,
+    pawns: Vec<Pawn<'a>>,
     click_boxes: Vec<ClickBox>,
 }
 
-impl Board {
-    pub fn new(world_unit: f32) -> Self {
+impl<'a> Board<'a> {
+    pub fn new(world_unit: f32, assets: &'a Assets) -> Self {
         let display_rect = mq::Rect::new(0.0, 0.0, mq::screen_width(), mq::screen_height());
         let mut camera = mq::Camera2D::from_display_rect(display_rect);
         camera.target = mq::Vec2::ZERO;
         camera.zoom.y *= -1.;
-        let font = load_font("assets/fonts/default.ttf");
         Self {
+            assets,
             camera,
-            font,
             world_unit,
             strings: vec![],
             lines: vec![],
@@ -58,6 +57,7 @@ impl Board {
         &mut self,
         handle: Handle,
         name: &str,
+        texture: Option<&'a mq::Texture2D>,
         pos: mq::Vec2,
         size: f32,
         font_size: u16,
@@ -88,6 +88,7 @@ impl Board {
 
         self.pawns.push(Pawn {
             label: name,
+            texture,
             bounds,
             fill_color,
             stroke,
@@ -114,11 +115,12 @@ impl Board {
         id
     }
 
-    fn get_string<'a>(&'a self, id: StringIdx) -> &'a str {
+    fn get_string<'b: 'a>(&'a self, id: StringIdx) -> &'a str {
         self.strings.get(id.0).map(|x| x.as_str()).unwrap_or("N/A")
     }
 
     pub fn draw(&self) {
+        let font = self.assets.font("board");
         mq::push_camera_state();
         mq::set_camera(&self.camera);
 
@@ -135,15 +137,19 @@ impl Board {
 
         for pawn in &self.pawns {
             fill_rect(&pawn.bounds, pawn.fill_color);
+            if let Some(texture) = pawn.texture {
+                draw_texture(texture, pawn.bounds, mq::WHITE);
+            }
             stroke_rect(&pawn.bounds, &pawn.stroke);
-            draw_label(self, &pawn.label, &pawn.bounds, Some(&self.font));
+            draw_label(self, &pawn.label, &pawn.bounds, Some(font));
         }
 
         mq::pop_camera_state();
     }
 
     pub fn billboard(&self, text: &str) {
-        let font = Some(&self.font);
+        let font = Some(self.assets.font("board"));
+
         let font_size = 48;
         let measure = mq::measure_text(text, font, font_size, 1.0);
         let x = (mq::screen_width() - measure.width) / 2.;
@@ -179,6 +185,19 @@ fn stroke_rect(rect: &mq::Rect, stroke: &Stroke) {
         rect.h,
         stroke.thickness,
         stroke.color,
+    );
+}
+
+fn draw_texture(texture: &mq::Texture2D, bounds: mq::Rect, color: mq::Color) {
+    mq::draw_texture_ex(
+        texture,
+        bounds.x,
+        bounds.y,
+        color,
+        mq::DrawTextureParams {
+            dest_size: Some(bounds.size()),
+            ..Default::default()
+        },
     );
 }
 
@@ -219,8 +238,9 @@ struct Line {
 }
 
 #[derive(Default)]
-struct Pawn {
+struct Pawn<'a> {
     label: Label,
+    texture: Option<&'a mq::Texture2D>,
     bounds: mq::Rect,
     fill_color: mq::Color,
     stroke: Stroke,
@@ -245,11 +265,4 @@ struct Stroke {
 struct ClickBox {
     handle: Handle,
     bounds: mq::Rect,
-}
-
-fn load_font(path: &str) -> mq::Font {
-    let mut reader = std::io::BufReader::new(std::fs::File::open(path).unwrap());
-    let mut buf = vec![];
-    reader.read_to_end(&mut buf).unwrap();
-    mq::load_ttf_font_from_bytes(&buf).unwrap()
 }

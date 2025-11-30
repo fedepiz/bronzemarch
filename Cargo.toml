@@ -13,6 +13,7 @@ opt-level = 3
 members = ["crates/*"]
 
 [workspace.dependencies]
+anyhow = "1"
 arrayvec = "0.7"
 bumpalo = { version = "3", features = ["collections"] }
 egui = "0.31"

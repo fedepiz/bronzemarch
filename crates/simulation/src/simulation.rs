@@ -520,6 +520,7 @@ impl Path {
 pub(crate) struct PartyData {
     pub entity: EntityId,
     pub position: GridCoord,
+    pub image: &'static str,
     pub pos: V2,
     pub size: f32,
     pub layer: u8,

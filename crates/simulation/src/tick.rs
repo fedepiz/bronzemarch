@@ -488,6 +488,7 @@ struct CreateLocation<'a> {
 
 struct CreateParty<'a> {
     site: &'a str,
+    image: &'static str,
     size: f32,
     movement_speed: f32,
     layer: u8,
@@ -503,7 +504,7 @@ pub struct CreateLocationParams<'a> {
     pub name: &'a str,
     pub site: &'a str,
     pub faction: &'a str,
-    pub settlement_kind: &'a str,
+    pub settlement_kind: &'static str,
     pub prosperity: f64,
     pub tokens: &'a [CreateToken<'a>],
 }
@@ -551,6 +552,7 @@ impl<'a> TickCommands<'a> {
             }),
             party: Some(CreateParty {
                 site: params.site,
+                image: params.settlement_kind,
                 size,
                 movement_speed: 0.,
                 layer: 0,
@@ -569,6 +571,7 @@ impl<'a> TickCommands<'a> {
             }),
             party: Some(CreateParty {
                 site: params.site,
+                image: "person",
                 size: 1.,
                 movement_speed: 2.5,
                 layer: 1,
@@ -677,6 +680,7 @@ fn process_entity_create_commands<'a>(
             };
             let id = sim.parties.insert(PartyData {
                 entity,
+                image: args.image,
                 position,
                 pos,
                 size: args.size,
