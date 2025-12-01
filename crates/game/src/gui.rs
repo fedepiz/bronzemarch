@@ -51,13 +51,37 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
         .show(ctx, |ui| {
             ui.set_min_width(250.);
 
-            let table = [
-                ("Name", "name"),
-                ("Kind", "kind"),
-                ("Faction", "faction"),
-                ("Country", "country"),
-            ];
-            field_table(ui, "overview-table", &table, obj);
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.heading("Overview");
+                    let table = [
+                        ("Name", "name"),
+                        ("Kind", "kind"),
+                        ("Cash", "cash"),
+                        ("Faction", "faction"),
+                        ("Country", "country"),
+                    ];
+                    field_table(ui, "overview-table", &table, obj);
+                });
+                ui.vertical(|ui| {
+                    if let Some(obj) = obj.try_child("pressure_agent") {
+                        ui.heading("Pressures");
+                        let table = [
+                            Row {
+                                label: "Name",
+                                primary: "name",
+                                tooltip: &[],
+                            },
+                            Row {
+                                label: "Value",
+                                primary: "amount",
+                                tooltip: &[],
+                            },
+                        ];
+                        rows_table(ui, "pressure_agent_table", &table, obj.list("current"));
+                    }
+                })
+            });
 
             if let Some(obj) = obj.try_child("location") {
                 ui.separator();

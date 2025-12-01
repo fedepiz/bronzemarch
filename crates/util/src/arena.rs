@@ -16,6 +16,10 @@ impl Arena {
         vec.into_bump_slice_mut()
     }
 
+    pub fn alloc_str<'a>(&'a self, source: &str) -> &'a str {
+        self.0.alloc_str(source)
+    }
+
     pub fn reset(&mut self) {
         self.0.reset();
     }

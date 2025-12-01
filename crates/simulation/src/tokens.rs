@@ -134,4 +134,12 @@ impl Tokens {
             .map(|tok| tok.data.size)
             .sum()
     }
+
+    pub fn despawn(&mut self, id: TokenContainerId) {
+        if let Some(container) = self.containers.remove(id) {
+            for id in container {
+                self.tokens.remove(id);
+            }
+        }
+    }
 }

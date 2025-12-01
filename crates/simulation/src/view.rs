@@ -104,12 +104,15 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
         }
 
         ObjectHandle::Entity(entity_id) => {
-            let entity = &sim.entities[entity_id];
+            let entity = sim.entities.get(entity_id)?;
 
             obj.set("name", &entity.name);
             obj.set("kind", entity.kind_name);
 
             if let Some(agent_id) = entity.agent {
+                let agent_data = &sim.agents[agent_id];
+                obj.set("cash", format!("{:1.0}$", agent_data.cash));
+
                 struct Field {
                     tag: &'static str,
                     query: RelatedAgent,
@@ -156,7 +159,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
 
                 let pops: Vec<_> = sim
                     .tokens
-                    .all_tokens_of_category(entity.tokens.unwrap(), TokenCategory::Pop)
+                    .all_tokens_of_category(location.tokens, TokenCategory::Pop)
                     .map(|tok| {
                         let mut obj = Object::new();
                         obj.set("name", tok.typ.name);
@@ -168,7 +171,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
 
                 let buildings: Vec<_> = sim
                     .tokens
-                    .all_tokens_of_category(entity.tokens.unwrap(), TokenCategory::Building)
+                    .all_tokens_of_category(location.tokens, TokenCategory::Building)
                     .map(|tok| {
                         let mut obj = Object::new();
                         obj.set("name", tok.typ.name);
@@ -225,7 +228,7 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                                 },
                             );
                             {
-                                let entity = sim.locations[typ.location].entity;
+                                let entity = sim.parties[typ.source].entity;
                                 let name = &sim.entities[entity].name;
                                 obj.set("source", name);
                             }
@@ -236,6 +239,31 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                 });
 
                 obj.set("location", entry);
+            }
+
+            if let Some(agent) = entity.pressure_agent {
+                let agent = &sim.pressurables[agent];
+                let mut entry = Object::new();
+
+                entry.set(
+                    "current",
+                    agent
+                        .current
+                        .iter()
+                        .map(|(kind, amount)| {
+                            let mut item = Object::new();
+
+                            let name = match kind {
+                                PressureType::Farmer => "Farmer",
+                            };
+                            item.set("name", name);
+                            item.set("amount", format!("{amount:1.0}"));
+                            item
+                        })
+                        .collect::<Vec<_>>(),
+                );
+
+                obj.set("pressure_agent", entry);
             }
         }
 

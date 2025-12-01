@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
 use arrayvec::ArrayVec;
-use strum::EnumCount;
+use strum::{EnumCount, IntoEnumIterator};
 
-pub trait EnumMapKey: EnumCount + Copy + TryFrom<usize> + Into<usize> + std::fmt::Debug {}
+pub trait EnumMapKey: IntoEnumIterator + EnumCount + Copy + Into<usize> {}
 
 pub struct EnumMap<K: EnumMapKey, V, const N: usize> {
     key_type: PhantomData<K>,
@@ -14,7 +14,7 @@ impl<K: EnumMapKey, V: Default, const N: usize> Default for EnumMap<K, V, N> {
     fn default() -> Self {
         Self {
             key_type: PhantomData,
-            data: Default::default(),
+            data: K::iter().map(|_| V::default()).collect(),
         }
     }
 }
@@ -42,25 +42,26 @@ impl<K: EnumMapKey, V, const N: usize> EnumMap<K, V, N> {
         &self,
     ) -> impl Iterator<Item = (K, &V)> + ExactSizeIterator + DoubleEndedIterator + use<'_, K, V, N>
     {
-        self.data.iter().enumerate().map(|(idx, v)| {
-            let key = match K::try_from(idx) {
-                Ok(x) => x,
-                _ => panic!(),
-            };
-            (key, v)
-        })
+        K::iter().zip(self.data.iter())
     }
 
     pub fn iter_mut(
         &mut self,
     ) -> impl Iterator<Item = (K, &mut V)> + ExactSizeIterator + DoubleEndedIterator + use<'_, K, V, N>
     {
-        self.data.iter_mut().enumerate().map(|(idx, v)| {
-            let key = match K::try_from(idx) {
-                Ok(x) => x,
-                _ => panic!(),
-            };
-            (key, v)
-        })
+        K::iter().zip(self.data.iter_mut())
+    }
+}
+
+impl<K: EnumMapKey, V: Copy, const N: usize> EnumMap<K, V, N> {
+    pub fn update(&mut self, key: K, f: impl FnOnce(V) -> V) {
+        self.set(key, f(*self.get(key)));
+    }
+
+    pub fn iter_copied(
+        &self,
+    ) -> impl Iterator<Item = (K, V)> + ExactSizeIterator + DoubleEndedIterator + use<'_, K, V, N>
+    {
+        K::iter().zip(self.data.iter().copied())
     }
 }

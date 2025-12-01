@@ -1,7 +1,8 @@
 use slotmap::*;
 use std::collections::*;
-use strum::EnumCount;
+use strum::{EnumCount, EnumIter};
 use util::arena::*;
+use util::enum_map::{EnumMap, EnumMapKey};
 use util::hierarchy::Hierarchy;
 use util::tally::Tally;
 
@@ -20,12 +21,20 @@ pub struct Simulation {
     pub(crate) parties: Parties,
     pub(crate) agents: Agents,
     pub(crate) locations: Locations,
+    pub(crate) pressurables: Pressurables,
+    pub(crate) beahviors: Behaviors,
 }
 
 new_key_type! { pub (crate) struct EntityId; }
 impl ArenaSafe for EntityId {}
 new_key_type! { pub(crate) struct AgentId; }
 impl ArenaSafe for AgentId {}
+
+new_key_type! { pub(crate) struct PressurableId; }
+impl ArenaSafe for PressurableId {}
+
+new_key_type! { pub(crate) struct BehaviorId; }
+impl ArenaSafe for BehaviorId {}
 
 new_key_type! { pub(crate) struct LocationId; }
 new_key_type! { pub(crate) struct PartyId; }
@@ -36,6 +45,8 @@ pub(crate) type GoodTypes = SlotMap<GoodId, GoodData>;
 pub(crate) type Entities = SlotMap<EntityId, EntityData>;
 pub(crate) type Locations = SlotMap<LocationId, LocationData>;
 pub(crate) type Parties = SlotMap<PartyId, PartyData>;
+pub(crate) type Pressurables = SlotMap<PressurableId, Pressureble>;
+pub(crate) type Behaviors = SlotMap<BehaviorId, Behavior>;
 
 impl Simulation {
     pub fn new() -> Simulation {
@@ -115,29 +126,45 @@ impl Tagged for GoodData {
     }
 }
 
-pub(crate) struct Tags<T: Copy> {
+pub(crate) struct Tags<T: Copy + Ord + std::hash::Hash> {
     string_to_id: HashMap<String, T>,
+    id_to_string: HashMap<T, String>,
 }
 
-impl<T: Copy> Default for Tags<T> {
+impl<T: Copy + Ord + std::hash::Hash> Default for Tags<T> {
     fn default() -> Self {
         Self {
             string_to_id: HashMap::default(),
+            id_to_string: HashMap::default(),
         }
     }
 }
 
-impl<T: Copy> Tags<T> {
+impl<T: Copy + Ord + std::hash::Hash> Tags<T> {
     pub fn insert(&mut self, tag: impl Into<String>, id: T) {
-        self.string_to_id.insert(tag.into(), id);
+        let str = tag.into();
+        self.string_to_id.insert(str.clone(), id);
+        self.id_to_string.insert(id, str);
     }
 
-    pub fn remove(&mut self, tag: &str) {
-        self.string_to_id.remove(tag);
+    pub fn unbind(&mut self, tag: &str) {
+        if let Some(id) = self.string_to_id.remove(tag) {
+            self.id_to_string.remove(&id);
+        }
+    }
+
+    pub fn remove(&mut self, id: &T) {
+        if let Some(tag) = self.id_to_string.remove(id) {
+            self.string_to_id.remove(&tag);
+        }
     }
 
     pub fn lookup(&self, tag: &str) -> Option<T> {
         self.string_to_id.get(tag).copied()
+    }
+
+    pub fn reverse_lookup(&self, id: &T) -> Option<&str> {
+        self.id_to_string.get(id).map(|x| x.as_str())
     }
 }
 
@@ -151,6 +178,13 @@ pub(crate) struct Agents {
 impl Agents {
     pub fn insert(&mut self, data: AgentData) -> AgentId {
         self.entries.insert(data)
+    }
+
+    pub fn despawn(&mut self, arena: &Arena, id: AgentId) {
+        self.entries.remove(id);
+        self.tags.remove(&id);
+        self.political_hierarchy.remove_child(id);
+        self.political_hierarchy.remove_parents(arena, &[id]);
     }
 }
 
@@ -172,6 +206,7 @@ impl std::ops::IndexMut<AgentId> for Agents {
 pub(crate) struct AgentData {
     pub entity: EntityId,
     pub flags: AgentFlags,
+    pub cash: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, EnumCount)]
@@ -316,15 +351,18 @@ pub(crate) struct EntityData {
     pub agent: Option<AgentId>,
     pub party: Option<PartyId>,
     pub location: Option<LocationId>,
-    pub tokens: Option<TokenContainerId>,
+    pub pressure_agent: Option<PressurableId>,
+    pub behavior: Option<BehaviorId>,
 }
 pub(crate) struct LocationData {
     pub entity: EntityId,
+    pub party: PartyId,
     pub site: SiteId,
     pub population: i64,
     pub prosperity: f64,
     pub market: Market,
     pub influence_sources: Vec<InfluenceSource>,
+    pub tokens: TokenContainerId,
 }
 
 pub(crate) struct InfluenceSource {
@@ -377,6 +415,77 @@ impl Market {
     }
 }
 
+// Pressure Agent
+pub(crate) struct Pressureble {
+    pub entity: EntityId,
+    pub current: PressureMap,
+    pub innate_growth: Vec<(PressureType, f64)>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, EnumIter, EnumCount)]
+pub(crate) enum PressureType {
+    Farmer,
+}
+
+impl From<PressureType> for usize {
+    fn from(value: PressureType) -> Self {
+        value as usize
+    }
+}
+
+impl EnumMapKey for PressureType {}
+
+const PRESSURE_TYPE_COUNT: usize = PressureType::COUNT;
+pub(crate) type PressureMap = EnumMap<PressureType, f64, PRESSURE_TYPE_COUNT>;
+
+#[derive(Default)]
+pub(crate) struct Behavior {
+    pub entity: EntityId,
+    pub goal: Goal,
+    pub task: Option<Task>,
+    pub memory: BehaviorMemory,
+    pub request_despawn: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct BehaviorMemory {
+    pub tasks: VecDeque<TaskMemory>,
+}
+
+pub(crate) struct TaskMemory {
+    pub target: PartyId,
+    pub timestamp: Date,
+}
+
+#[derive(Clone, PartialEq)]
+pub(crate) enum Goal {
+    Idle,
+    LocalTrade { base: PartyId },
+}
+
+impl Default for Goal {
+    fn default() -> Self {
+        Goal::Idle
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Task {
+    pub target: PartyId,
+    // Remember to add this task to the set of memories
+    pub remember: bool,
+    // Continue this task after arriving at the
+    // destination?
+    pub continue_after_arrival: bool,
+    // Despawn the party after this task is complete?
+    pub despawn_on_complete: bool,
+    // Give away goods to target
+    pub give_away_to_target: bool,
+    // Trade with the target
+    pub trade_with_target: bool,
+}
+
+// Grid
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
 pub(crate) enum GridCoord {
     At(SiteId),
@@ -414,6 +523,13 @@ impl GridCoord {
         match self {
             Self::At(x) => (x, x, 0.),
             Self::Between(a, b, t) => (a, b, t),
+        }
+    }
+
+    pub fn as_site(self) -> Option<SiteId> {
+        match self {
+            Self::At(x) => Some(x),
+            _ => None,
         }
     }
 
@@ -519,6 +635,7 @@ impl Path {
 
 pub(crate) struct PartyData {
     pub entity: EntityId,
+    pub location: Option<LocationId>,
     pub position: GridCoord,
     pub image: &'static str,
     pub pos: V2,
@@ -526,6 +643,7 @@ pub(crate) struct PartyData {
     pub layer: u8,
     pub movement_speed: f32,
     pub movement: PartyMovement,
+    pub good_stock: SecondaryMap<GoodId, f64>,
 }
 
 #[derive(Clone, Copy)]

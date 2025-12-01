@@ -1,3 +1,4 @@
+use slotmap::SecondaryMap;
 use util::arena::Arena;
 
 use crate::object::*;
@@ -10,34 +11,70 @@ use crate::view::*;
 #[derive(Default)]
 pub struct TickRequest<'a> {
     pub commands: TickCommands<'a>,
-    pub advance_time: bool,
+    pub num_ticks: usize,
     pub map_viewport: Extents,
     pub objects_to_extract: Vec<ObjectId>,
 }
 
-pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena) -> SimView {
-    if request.advance_time {
+pub(super) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena) -> SimView {
+    // Apply movement orders
+    if let Some((subject, target)) = request.commands.move_to {
+        apply_move_order_to(sim, subject, target);
+    }
+
+    // Inner ticks
+    if request.num_ticks == 0 {
+        let cmds = std::mem::take(&mut request.commands);
+        tick_inner(sim, cmds, false, arena);
+    }
+    for _ in 0..request.num_ticks {
+        let cmds = std::mem::take(&mut request.commands);
+        tick_inner(sim, cmds, true, arena);
+    }
+
+    // Extract view
+    let mut view = SimView::default();
+    view.map_items = view::map_view_items(sim, request.map_viewport);
+    view.map_lines = view::map_view_lines(sim, request.map_viewport);
+    view.objects = request
+        .objects_to_extract
+        .iter()
+        .map(|&id| view::extract_object(sim, id))
+        .collect();
+    view
+}
+
+fn tick_inner(sim: &mut Simulation, mut commands: TickCommands, advance_time: bool, arena: &Arena) {
+    let mut create_entitity_requests = vec![];
+    if advance_time {
         sim.date.advance();
 
-        let tick_market = sim.date.is_new_day();
+        let is_new_day = sim.date.is_new_day();
 
         tick_influences(arena, &mut sim.sites, &sim.locations);
+
+        // Pressures
+        {
+            let events = tick_pressures(&mut sim.pressurables, is_new_day);
+            let creations = handle_pressure_events(arena, sim, events);
+            create_entitity_requests.extend(creations);
+        }
 
         // Simulate economy at locations
         tick_location_economy(
             arena,
-            &sim.entities,
             &mut sim.locations,
             &sim.tokens,
             &sim.good_types,
             &sim.sites,
-            tick_market,
+            is_new_day,
         );
 
-        // Apply movement order
-        if let Some((subject, target)) = request.commands.move_to {
-            apply_move_order_to(sim, subject, target);
-        }
+        // nnnnnnors
+        let effects = tick_behaviors::tick_behaviors(sim);
+
+        transfer::resolve(sim, effects.transfers);
+        trade::resolve(sim, effects.trade_events);
 
         // Tick party AI (deciding where to go)
         let result = tick_party_ai(sim);
@@ -78,20 +115,45 @@ pub(crate) fn tick(sim: &mut Simulation, mut request: TickRequest, arena: &Arena
 
     // Create entities
     {
-        let cmds = request.commands.create_entity_cmds.drain(..);
+        let cmds = commands
+            .create_entity_cmds
+            .drain(..)
+            .chain(create_entitity_requests);
         process_entity_create_commands(sim, cmds);
     }
 
-    // Extract view
-    let mut view = SimView::default();
-    view.map_items = view::map_view_items(sim, request.map_viewport);
-    view.map_lines = view::map_view_lines(sim, request.map_viewport);
-    view.objects = request
-        .objects_to_extract
-        .iter()
-        .map(|&id| view::extract_object(sim, id))
-        .collect();
-    view
+    // Despawns
+    let mut despawns = vec![];
+    despawns.extend(
+        sim.beahviors
+            .values()
+            .filter(|data| data.request_despawn)
+            .map(|x| x.entity),
+    );
+
+    for entity in despawns {
+        let entity = match sim.entities.remove(entity) {
+            Some(x) => x,
+            None => continue,
+        };
+        if let Some(id) = entity.party {
+            sim.parties.remove(id);
+        }
+        if let Some(id) = entity.behavior {
+            sim.beahviors.remove(id);
+        }
+        if let Some(id) = entity.agent {
+            sim.agents.despawn(arena, id);
+        }
+        if let Some(id) = entity.location {
+            let location = sim.locations.remove(id).unwrap();
+            sim.tokens.despawn(location.tokens);
+            sim.sites.unbind_location(location.site);
+        }
+        if let Some(id) = entity.pressure_agent {
+            sim.pressurables.remove(id);
+        }
+    }
 }
 
 fn apply_move_order_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId) {
@@ -117,20 +179,20 @@ fn apply_move_order_to(sim: &mut Simulation, subject: ObjectId, target: ObjectId
 fn tick_influences(arena: &Arena, sites: &mut Sites, locations: &Locations) {
     let mut sources = sites.make_secondary_map();
 
-    for (loc_id, location) in locations.iter() {
+    for location in locations.values() {
         let mut influences = arena.new_vec();
 
-        for source in &location.influence_sources {
+        for source_data in &location.influence_sources {
             let mut power = 0;
 
             // Add in population weight
-            power += (source.population_modifier * location.population as f64).round() as i64;
+            power += (source_data.population_modifier * location.population as f64).round() as i64;
 
             if power > 0 {
                 influences.push((
                     InfluenceType {
-                        kind: source.kind,
-                        location: loc_id,
+                        kind: source_data.kind,
+                        source: location.party,
                     },
                     power as i32,
                 ));
@@ -143,9 +205,106 @@ fn tick_influences(arena: &Arena, sites: &mut Sites, locations: &Locations) {
     crate::sites::propagate_influences(arena, sites, &sources);
 }
 
+enum PressureEventType {
+    SpawnFarmer,
+}
+
+struct PressureEvent {
+    typ: PressureEventType,
+    target: EntityId,
+}
+
+fn tick_pressures(agents: &mut Pressurables, is_new_day: bool) -> Vec<PressureEvent> {
+    let mut events = vec![];
+    if is_new_day {
+        for agent in agents.values_mut() {
+            for &(typ, value) in &agent.innate_growth {
+                agent.current.update(typ, |x| (x + value).max(0.));
+            }
+        }
+
+        struct Trigger {
+            target: PressureType,
+            threshold: f64,
+            subtract: f64,
+            event: PressureEventType,
+        }
+
+        const TRIGGERS: &[Trigger] = &[Trigger {
+            target: PressureType::Farmer,
+            threshold: 20.,
+            subtract: 20.,
+            event: PressureEventType::SpawnFarmer,
+        }];
+
+        for agent in agents.values_mut() {
+            for trigger in TRIGGERS {
+                let current = *agent.current.get(trigger.target);
+                if current >= trigger.threshold {
+                    agent
+                        .current
+                        .set(trigger.target, (current - trigger.subtract).max(0.));
+                    events.push(PressureEvent {
+                        typ: PressureEventType::SpawnFarmer,
+                        target: agent.entity,
+                    });
+                }
+            }
+        }
+    }
+    events
+}
+
+fn handle_pressure_events<'a>(
+    arena: &'a Arena,
+    sim: &Simulation,
+    events: Vec<PressureEvent>,
+) -> Vec<CreateEntity<'a>> {
+    let mut out = vec![];
+    // Handle pressure events
+    for event in events {
+        match event.typ {
+            PressureEventType::SpawnFarmer => {
+                let target_entity = &sim.entities[event.target];
+
+                let political_parent = target_entity
+                    .agent
+                    .and_then(|id| sim.agents.political_hierarchy.parent(id))
+                    .and_then(|id| sim.agents.tags.reverse_lookup(&id))
+                    .map(|str| arena.alloc_str(str));
+
+                let target_location = &sim.locations[target_entity.location.unwrap()];
+                let site = arena.alloc_str(&sim.sites[target_location.site].tag);
+
+                out.push(CreateEntity {
+                    name: "Farmers",
+                    agent: Some(CreateAgent {
+                        tag: "",
+                        flags: &[],
+                        political_parent,
+                        cash: 1000.,
+                    }),
+                    party: Some(CreateParty {
+                        site,
+                        image: "farmers",
+                        size: 1.,
+                        movement_speed: 2.,
+                        layer: 1,
+                        has_goods: true,
+                    }),
+                    behavior: Some(CreateBehavior {
+                        base: Some(target_entity.party.unwrap()),
+                    }),
+                    ..Default::default()
+                });
+            }
+        }
+    }
+    out
+}
+
 fn tick_location_economy(
     arena: &Arena,
-    entities: &Entities,
     locations: &mut Locations,
     tokens: &Tokens,
     good_types: &GoodTypes,
@@ -154,15 +313,7 @@ fn tick_location_economy(
 ) {
     // New location economic tick
     for location in locations.values_mut() {
-        let tokens = {
-            let entity = &entities[location.entity];
-            arena.alloc_iter(
-                entity
-                    .tokens
-                    .into_iter()
-                    .flat_map(|id| tokens.all_tokens_in(id)),
-            )
-        };
+        let tokens = arena.alloc_iter(tokens.all_tokens_in(location.tokens));
 
         location.population = Tokens::count_size(tokens, TokenCategory::Pop);
 
@@ -326,9 +477,9 @@ fn tick_party_ai(sim: &Simulation) -> Vec<Navigate> {
                 destination = None;
             } else {
                 target = party_data.movement.target;
-                destination = target.map(|tgt| match tgt {
-                    MovementTarget::Site(site) => GridCoord::at(site),
-                    MovementTarget::Party(party) => sim.parties[party].position,
+                destination = target.and_then(|tgt| match tgt {
+                    MovementTarget::Site(site) => Some(GridCoord::at(site)),
+                    MovementTarget::Party(party) => sim.parties.get(party).map(|x| x.position),
                 });
             };
 
@@ -466,13 +617,15 @@ struct CreateEntity<'a> {
     agent: Option<CreateAgent<'a>>,
     location: Option<CreateLocation<'a>>,
     party: Option<CreateParty<'a>>,
-    tokens: Option<&'a [CreateToken<'a>]>,
+    pressure_agent: Option<CreatePressureAgent<'a>>,
+    behavior: Option<CreateBehavior>,
 }
 
 struct CreateAgent<'a> {
     tag: &'a str,
     flags: &'a [AgentFlag],
     political_parent: Option<&'a str>,
+    cash: f64,
 }
 
 pub struct CreateToken<'a> {
@@ -480,10 +633,15 @@ pub struct CreateToken<'a> {
     pub size: i64,
 }
 
+pub struct CreatePressureAgent<'a> {
+    pressures: &'a [(PressureType, f64)],
+}
+
 struct CreateLocation<'a> {
     site: &'a str,
     prosperity: f64,
     is_town: bool,
+    tokens: &'a [CreateToken<'a>],
 }
 
 struct CreateParty<'a> {
@@ -492,6 +650,11 @@ struct CreateParty<'a> {
     size: f32,
     movement_speed: f32,
     layer: u8,
+    has_goods: bool,
+}
+
+struct CreateBehavior {
+    base: Option<PartyId>,
 }
 
 #[derive(Default)]
@@ -536,6 +699,11 @@ impl<'a> TickCommands<'a> {
             "town" => true,
             _ => false,
         };
+        let pressures: &[(PressureType, f64)] = match params.settlement_kind {
+            "village" => &[(PressureType::Farmer, 1.0)],
+            _ => &[],
+        };
+
         self.create_entity_cmds.push(CreateEntity {
             name: params.name,
             kind_name: "Location",
@@ -543,12 +711,13 @@ impl<'a> TickCommands<'a> {
                 tag: "",
                 flags: &[],
                 political_parent: Some(params.faction),
+                cash: 0.,
             }),
-            tokens: Some(params.tokens),
             location: Some(CreateLocation {
                 site: params.site,
                 prosperity: params.prosperity,
                 is_town,
+                tokens: params.tokens,
             }),
             party: Some(CreateParty {
                 site: params.site,
@@ -556,7 +725,10 @@ impl<'a> TickCommands<'a> {
                 size,
                 movement_speed: 0.,
                 layer: 0,
+                has_goods: false,
             }),
+            pressure_agent: Some(CreatePressureAgent { pressures }),
+            ..Default::default()
         });
     }
 
@@ -568,6 +740,7 @@ impl<'a> TickCommands<'a> {
                 tag: "",
                 flags: &[],
                 political_parent: Some(params.faction),
+                cash: 0.,
             }),
             party: Some(CreateParty {
                 site: params.site,
@@ -575,6 +748,7 @@ impl<'a> TickCommands<'a> {
                 size: 1.,
                 movement_speed: 2.5,
                 layer: 1,
+                has_goods: true,
             }),
             ..Default::default()
         });
@@ -588,6 +762,7 @@ impl<'a> TickCommands<'a> {
                 tag: params.tag,
                 flags: &[AgentFlag::IsFaction],
                 political_parent: None,
+                cash: 0.,
             }),
             ..Default::default()
         });
@@ -605,26 +780,11 @@ fn process_entity_create_commands<'a>(
             ..Default::default()
         });
 
-        let tokens = command.tokens.map(|cmds| {
-            let container = sim.tokens.add_container();
-            for create in cmds {
-                match sim.tokens.types.lookup(create.tag) {
-                    Some(typ) => {
-                        sim.tokens.add_token(container, typ, create.size);
-                    }
-                    None => {
-                        println!("Unknown token type '{}'", create.tag);
-                        continue;
-                    }
-                }
-            }
-            container
-        });
-
         let agent = command.agent.map(|args| {
             let id = sim.agents.insert(AgentData {
                 entity,
                 flags: AgentFlags::new(args.flags),
+                cash: args.cash,
             });
 
             if !args.tag.is_empty() {
@@ -640,6 +800,33 @@ fn process_entity_create_commands<'a>(
             id
         });
 
+        let party = command.party.and_then(|args| {
+            let (position, pos) = match sim.sites.lookup(args.site) {
+                Some((id, data)) => (GridCoord::at(id), data.pos),
+                None => {
+                    println!("Undefined site '{}'", args.site);
+                    return None;
+                }
+            };
+            let mut good_stock = Default::default();
+            if args.has_goods {
+                good_stock = sim.good_types.keys().map(|x| (x, 0.0)).collect();
+            }
+            let id = sim.parties.insert(PartyData {
+                entity,
+                location: None,
+                image: args.image,
+                position,
+                pos,
+                size: args.size,
+                layer: args.layer,
+                movement_speed: args.movement_speed,
+                movement: PartyMovement::default(),
+                good_stock,
+            });
+            Some(id)
+        });
+
         let location = command.location.and_then(|args| {
             let site = match sim.sites.lookup(args.site) {
                 Some((id, _)) => id,
@@ -648,6 +835,28 @@ fn process_entity_create_commands<'a>(
                     return None;
                 }
             };
+
+            let party = match party {
+                Some(id) => id,
+                None => {
+                    println!("Location creation requires party");
+                    return None;
+                }
+            };
+
+            let tokens = sim.tokens.add_container();
+            for create in args.tokens {
+                match sim.tokens.types.lookup(create.tag) {
+                    Some(typ) => {
+                        sim.tokens.add_token(tokens, typ, create.size);
+                    }
+                    None => {
+                        println!("Unknown token type '{}'", create.tag);
+                        continue;
+                    }
+                }
+            }
+
             let mut influence_sources = vec![];
 
             if args.is_town {
@@ -659,7 +868,9 @@ fn process_entity_create_commands<'a>(
 
             let location = sim.locations.insert(LocationData {
                 entity,
+                party,
                 site,
+                tokens,
                 population: 0,
                 prosperity: args.prosperity,
                 market: Market::new(&sim.good_types),
@@ -667,34 +878,376 @@ fn process_entity_create_commands<'a>(
             });
             sim.sites.bind_location(site, location);
 
+            sim.parties[party].location = Some(location);
+
             Some(location)
         });
 
-        let party = command.party.and_then(|args| {
-            let (position, pos) = match sim.sites.lookup(args.site) {
-                Some((id, data)) => (GridCoord::at(id), data.pos),
-                None => {
-                    println!("Undefined site '{}'", args.site);
-                    return None;
-                }
-            };
-            let id = sim.parties.insert(PartyData {
+        let pressure_agent = command.pressure_agent.map(|args| {
+            sim.pressurables.insert(Pressureble {
                 entity,
-                image: args.image,
-                position,
-                pos,
-                size: args.size,
-                layer: args.layer,
-                movement_speed: args.movement_speed,
-                movement: PartyMovement::default(),
-            });
-            Some(id)
+                current: PressureMap::default(),
+                innate_growth: args.pressures.iter().copied().collect(),
+            })
+        });
+
+        let behavior = command.behavior.map(|args| {
+            let goal = match args.base {
+                Some(base) => Goal::LocalTrade { base },
+                None => Goal::Idle,
+            };
+            sim.beahviors.insert(Behavior {
+                entity,
+                goal,
+                ..Default::default()
+            })
         });
 
         let entity = &mut sim.entities[entity];
         entity.agent = agent;
         entity.party = party;
         entity.location = location;
-        entity.tokens = tokens;
+        entity.pressure_agent = pressure_agent;
+        entity.behavior = behavior;
+    }
+}
+
+mod tick_behaviors {
+    use slotmap::Key;
+
+    #[derive(Default)]
+    pub(super) struct Effects {
+        pub transfers: Vec<super::transfer::Event>,
+        pub trade_events: Vec<super::trade::Event>,
+    }
+
+    use super::*;
+    pub(super) fn tick_behaviors(sim: &mut Simulation) -> Effects {
+        let mut effects = Effects::default();
+
+        let mut behaviors = std::mem::take(&mut sim.beahviors);
+        for (_, behavior) in &mut behaviors {
+            let my_entity = &sim.entities[behavior.entity];
+            let my_party = &sim.parties[my_entity.party.unwrap()];
+
+            behavior.task = behavior
+                .task
+                .take()
+                .filter(|task| {
+                    let validation = validate_task(sim, task, my_party);
+                    if validation.is_over {
+                        on_task_complete(sim, task, &validation, behavior, &mut effects);
+                    }
+                    !validation.is_over
+                })
+                .or_else(|| decide_task(sim, &behavior.goal, my_party, &behavior.memory));
+        }
+
+        for (_, behavior) in &behaviors {
+            let party = sim.entities[behavior.entity].party.unwrap();
+            let party_data = &mut sim.parties[party];
+            party_data.movement.target = behavior
+                .task
+                .as_ref()
+                .filter(|x| !x.target.is_null())
+                .map(|x| MovementTarget::Party(x.target));
+        }
+
+        sim.beahviors = behaviors;
+
+        effects
+    }
+
+    #[derive(Default)]
+    struct TaskValidation {
+        is_over: bool,
+        at_target: Option<PartyId>,
+    }
+
+    fn validate_task(sim: &Simulation, task: &Task, my_party: &PartyData) -> TaskValidation {
+        let mut result = TaskValidation::default();
+
+        if task.target.is_null() {
+            result.is_over = true;
+        }
+
+        if let Some(target) = sim.parties.get(task.target) {
+            if !task.continue_after_arrival && my_party.position == target.position {
+                result.is_over = true;
+                result.at_target = Some(task.target)
+            }
+        }
+
+        result
+    }
+
+    fn on_task_complete(
+        sim: &Simulation,
+        task: &Task,
+        validation: &TaskValidation,
+        behavior: &mut Behavior,
+        effects: &mut Effects,
+    ) {
+        if task.remember {
+            behavior.memory.tasks.push_back(TaskMemory {
+                target: task.target,
+                timestamp: sim.date,
+            });
+        }
+
+        if task.despawn_on_complete {
+            behavior.request_despawn = true;
+        }
+
+        if task.trade_with_target
+            && let Some(target) = validation.at_target
+            && let Some(location) = sim.parties[target].location
+        {
+            let entity = &sim.entities[behavior.entity];
+            effects.trade_events.push(trade::Event {
+                party: entity.party.unwrap(),
+                agent: entity.agent.unwrap(),
+                location,
+            });
+        }
+
+        if task.give_away_to_target
+            && let Some(target) = validation.at_target
+        {
+            let source = sim.entities[behavior.entity].party.unwrap();
+            effects
+                .transfers
+                .push(super::transfer::Event { source, target });
+        }
+    }
+
+    fn decide_task(
+        sim: &Simulation,
+        goal: &Goal,
+        my_party: &PartyData,
+        memory: &BehaviorMemory,
+    ) -> Option<Task> {
+        match goal {
+            Goal::Idle => None,
+            &Goal::LocalTrade { base } => {
+                let base_party = sim.parties.get(base)?;
+                // Are we on the outgoing or the return leg?
+                // Go home if we are not home
+                Some(if memory.tasks.is_empty() || memory.tasks.len() > 1 {
+                    // If we already had traded once (by completing the outgoing task), mark for death
+                    let is_returning = !memory.tasks.is_empty();
+                    Task {
+                        target: base,
+                        give_away_to_target: is_returning,
+                        trade_with_target: !is_returning,
+                        despawn_on_complete: is_returning,
+                        remember: true,
+                        ..Default::default()
+                    }
+                } else {
+                    // Set out from home
+                    let site = base_party.position.as_site()?;
+                    let target = sim.sites[site]
+                        .influences
+                        .top_source(InfluenceKind::Market)?;
+                    Task {
+                        target,
+                        remember: true,
+                        trade_with_target: true,
+                        ..Default::default()
+                    }
+                })
+            }
+        }
+    }
+}
+
+mod transfer {
+    use super::*;
+    use crate::PartyId;
+
+    #[derive(Clone, Copy)]
+    pub(super) struct Event {
+        pub source: PartyId,
+        pub target: PartyId,
+    }
+
+    pub fn resolve(sim: &mut Simulation, events: impl IntoIterator<Item = Event>) {
+        for event in events {
+            let source_data = &mut sim.parties[event.source];
+            let target_goods = source_data.good_stock.clone();
+            source_data.good_stock.values_mut().for_each(|x| *x = 0.0);
+            let target_data = &mut sim.parties[event.target];
+            match target_data.location {
+                Some(location) => {
+                    let market = &mut sim.locations[location].market;
+                    for (good_id, value) in target_goods {
+                        market.goods[good_id].stock += value;
+                        market.goods[good_id].stock_delta += value;
+                    }
+                }
+                None => {
+                    for (good_id, value) in target_goods {
+                        target_data.good_stock[good_id] += value;
+                    }
+                }
+            }
+        }
+    }
+}
+
+mod trade {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    pub(super) struct Event {
+        pub party: PartyId,
+        pub agent: AgentId,
+        pub location: LocationId,
+    }
+
+    pub fn resolve(sim: &mut Simulation, events: impl IntoIterator<Item = Event>) {
+        let scratch = &mut Scratch::new(&sim.good_types);
+        let mut traders = collect_traders(sim, events);
+
+        // Process
+        for trader in &mut traders {
+            let market = &mut sim.locations[trader.event.location].market;
+            resolve_trade(&sim.good_types, trader, market, scratch);
+        }
+
+        // Write back
+        for trader in traders {
+            let agent_data = &mut sim.agents[trader.event.agent];
+            let party_data = &mut sim.parties[trader.event.party];
+
+            agent_data.cash = trader.cash;
+            for good_id in sim.good_types.keys() {
+                party_data.good_stock[good_id] = trader.goods[good_id].quantity;
+            }
+        }
+    }
+
+    fn collect_traders(sim: &Simulation, events: impl IntoIterator<Item = Event>) -> Vec<Trader> {
+        events
+            .into_iter()
+            .map(|event| {
+                let cash = sim.agents[event.agent].cash;
+                let party_data = &sim.parties[event.party];
+                let goods = sim
+                    .good_types
+                    .keys()
+                    .map(|good_id| {
+                        let quantity = party_data
+                            .good_stock
+                            .get(good_id)
+                            .copied()
+                            .unwrap_or_default();
+                        let data = TraderGood {
+                            quantity,
+                            at_price: 0.0,
+                            can_sell: true,
+                            can_buy: true,
+                        };
+                        (good_id, data)
+                    })
+                    .collect();
+
+                Trader { cash, goods, event }
+            })
+            .collect()
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct TraderGood {
+        quantity: f64,
+        at_price: f64,
+        can_sell: bool,
+        can_buy: bool,
+    }
+
+    struct Trader {
+        cash: f64,
+        goods: SecondaryMap<GoodId, TraderGood>,
+        event: Event,
+    }
+
+    struct Scratch {
+        weights: SecondaryMap<GoodId, f64>,
+    }
+
+    impl Scratch {
+        fn new(good_types: &GoodTypes) -> Self {
+            Self {
+                weights: good_types.keys().map(|x| (x, 0.0)).collect(),
+            }
+        }
+    }
+
+    fn resolve_trade(
+        goods: &GoodTypes,
+        trader: &mut Trader,
+        market: &mut Market,
+        scratch: &mut Scratch,
+    ) {
+        // Decide what to buy and what to sell
+        scratch.weights.values_mut().for_each(|x| *x = 0.0);
+
+        // Perform sales
+        for good_id in goods.keys() {
+            let in_trader = &mut trader.goods[good_id];
+            if !in_trader.can_sell {
+                continue;
+            }
+
+            let in_market = &mut market.goods[good_id];
+
+            let quantity = in_trader.quantity;
+            let value = in_market.price * quantity;
+            trader.cash += value;
+
+            in_market.stock += quantity;
+            in_market.stock_delta += quantity;
+            in_trader.quantity -= quantity;
+        }
+
+        // Perform buys
+        // First calculate how much money the trader wants to spend on each goods
+        let mut total_weight = 0.0;
+        for good_id in goods.keys() {
+            let in_trader = &trader.goods[good_id];
+            let in_market = &market.goods[good_id];
+
+            let want_weight = if in_trader.can_buy { 1.0 } else { 0.0 };
+            let exists_weight = if in_market.stock <= 0.0 { 0.0 } else { 1.0 };
+            let price_weight = 1.0 / in_market.price;
+            let weight = price_weight * want_weight * exists_weight;
+            scratch.weights[good_id] = weight;
+            total_weight += weight;
+        }
+
+        // Actually effectuate the transaction
+        if total_weight != 0.0 {
+            for good_id in goods.keys() {
+                let weight = scratch.weights[good_id];
+                let prop = weight / total_weight;
+                let cash_allocated = (trader.cash * prop).min(trader.cash);
+
+                let in_market = &mut market.goods[good_id];
+                let price = in_market.price;
+                let can_afford = if price == 0.0 {
+                    f64::MAX
+                } else {
+                    cash_allocated / price
+                };
+                let bought = can_afford.min(in_market.stock);
+                in_market.stock -= bought;
+                in_market.stock_delta -= bought;
+
+                let in_trader = &mut trader.goods[good_id];
+                in_trader.quantity += bought;
+                trader.cash = (trader.cash - bought * in_market.price).max(0.);
+            }
+        }
     }
 }

@@ -90,7 +90,15 @@ async fn amain() {
         }
         egui_macroquad::draw();
 
-        request.advance_time = !is_paused;
+        request.num_ticks = if is_paused {
+            0
+        } else {
+            if mq::is_key_down(mq::KeyCode::LeftControl) {
+                10
+            } else {
+                1
+            }
+        };
 
         request.map_viewport = {
             let convert = |v: mq::Vec2| V2::new(v.x, v.y);

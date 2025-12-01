@@ -25,12 +25,29 @@ pub(crate) struct SiteData {
     pub neighbours: Vec<(SiteId, f32)>,
     pub location: Option<LocationId>,
     pub rgo: SiteRGO,
-    pub influences: Vec<(InfluenceType, i32)>,
+    pub influences: Influences,
 }
 
 impl Tagged for SiteData {
     fn tag(&self) -> &str {
         &self.tag
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Influences(Vec<(InfluenceType, i32)>);
+
+impl Influences {
+    pub fn top_source(&self, kind: InfluenceKind) -> Option<PartyId> {
+        self.0
+            .iter()
+            .filter(|x| x.0.kind == kind)
+            .max_by_key(|(_, x)| x)
+            .map(|(x, _)| x.source)
+    }
+
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = &'a (InfluenceType, i32)> + use<'a> {
+        self.0.iter()
     }
 }
 
@@ -56,7 +73,7 @@ impl Sites {
             neighbours: vec![],
             location: None,
             rgo,
-            influences: vec![],
+            influences: Influences::default(),
         })
     }
 
@@ -99,6 +116,13 @@ impl Sites {
         if let Some(site) = self.entries.get_mut(id) {
             assert!(site.location.is_none());
             site.location = Some(location);
+        }
+    }
+
+    pub fn unbind_location(&mut self, id: SiteId) {
+        if let Some(site) = self.entries.get_mut(id) {
+            assert!(site.location.is_some());
+            site.location = None;
         }
     }
 
@@ -181,7 +205,7 @@ pub(crate) fn propagate_influences(
         // Accumulate contributions from neighbours
         for &(neighbour, distance) in sites.neighbours(site_id) {
             let neighbour_data = &sites[neighbour];
-            for &(inf_type, amount) in &neighbour_data.influences {
+            for &(inf_type, amount) in &neighbour_data.influences.0 {
                 let propagated = decay(inf_type.kind, amount, distance);
                 if propagated > 0 {
                     contributions.push((inf_type, propagated));
@@ -200,14 +224,16 @@ pub(crate) fn propagate_influences(
             }
         }
 
+        combined.sort_by_key(|(_, x)| -x);
+
         (site_id, combined.into_bump_slice())
     }));
 
     // Apply updates
     for &mut (id, influences) in updates {
         let site = &mut sites.entries[id];
-        site.influences.clear();
-        site.influences.extend_from_slice(influences);
+        site.influences.0.clear();
+        site.influences.0.extend_from_slice(influences);
     }
 }
 
@@ -220,7 +246,7 @@ impl ArenaSafe for InfluenceKind {}
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct InfluenceType {
     pub kind: InfluenceKind,
-    pub location: LocationId,
+    pub source: PartyId,
 }
 
 impl ArenaSafe for InfluenceType {}
