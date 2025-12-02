@@ -449,12 +449,7 @@ pub(crate) struct Behavior {
 
 #[derive(Default)]
 pub(crate) struct BehaviorMemory {
-    pub tasks: VecDeque<TaskMemory>,
-}
-
-pub(crate) struct TaskMemory {
-    pub target: PartyId,
-    pub timestamp: Date,
+    pub state: usize,
 }
 
 #[derive(Clone, PartialEq)]
@@ -473,7 +468,7 @@ impl Default for Goal {
 pub(crate) struct Task {
     pub target: PartyId,
     // Remember to add this task to the set of memories
-    pub remember: bool,
+    pub on_complete_state: usize,
     // Continue this task after arriving at the
     // destination?
     pub continue_after_arrival: bool,
@@ -643,7 +638,42 @@ pub(crate) struct PartyData {
     pub layer: u8,
     pub movement_speed: f32,
     pub movement: PartyMovement,
-    pub good_stock: SecondaryMap<GoodId, f64>,
+    pub good_stock: GoodStock,
+}
+
+pub(crate) struct GoodStock {
+    pub amount: SecondaryMap<GoodId, f64>,
+}
+
+impl GoodStock {
+    pub fn new(good_types: &GoodTypes) -> Self {
+        Self {
+            amount: good_types.keys().map(|x| (x, 0.)).collect(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.amount.values_mut().for_each(|x| *x = 0.0);
+    }
+
+    pub fn add_goods(&mut self, iter: impl IntoIterator<Item = (GoodId, f64)>) {
+        for (good_id, value) in iter {
+            self.amount[good_id] += value;
+        }
+    }
+}
+
+impl std::ops::Index<GoodId> for GoodStock {
+    type Output = f64;
+    fn index(&self, index: GoodId) -> &Self::Output {
+        &self.amount[index]
+    }
+}
+
+impl std::ops::IndexMut<GoodId> for GoodStock {
+    fn index_mut(&mut self, index: GoodId) -> &mut Self::Output {
+        &mut self.amount[index]
+    }
 }
 
 #[derive(Clone, Copy)]

@@ -63,6 +63,26 @@ fn object_ui(ctx: &egui::Context, obj_idx: usize, obj: &Object) {
                     ];
                     field_table(ui, "overview-table", &table, obj);
                 });
+
+                if let Some(list) = obj.try_list("good_stock") {
+                    ui.vertical(|ui| {
+                        ui.heading("Stock");
+                        let table = [
+                            Row {
+                                label: "Name",
+                                primary: "name",
+                                tooltip: &[],
+                            },
+                            Row {
+                                label: "Amount",
+                                primary: "amount",
+                                tooltip: &[],
+                            },
+                        ];
+                        rows_table(ui, "good_stock", &table, list);
+                    });
+                }
+
                 ui.vertical(|ui| {
                     if let Some(obj) = obj.try_child("pressure_agent") {
                         ui.heading("Pressures");

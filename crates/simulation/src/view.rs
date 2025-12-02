@@ -139,6 +139,26 @@ pub(super) fn extract_object(sim: &mut Simulation, id: ObjectId) -> Option<Objec
                 }
             }
 
+            if let Some(party) = entity.party {
+                let party = &sim.parties[party];
+                obj.set(
+                    "good_stock",
+                    sim.good_types
+                        .iter()
+                        .filter_map(|(good_id, good_data)| {
+                            let amount = party.good_stock[good_id];
+                            if amount == 0.0 {
+                                return None;
+                            }
+                            let mut obj = Object::new();
+                            obj.set("name", good_data.name);
+                            obj.set("amount", format!("{amount:1.0}"));
+                            Some(obj)
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+
             if let Some(location) = entity.location {
                 let location = &sim.locations[location];
                 let mut entry = Object::new();

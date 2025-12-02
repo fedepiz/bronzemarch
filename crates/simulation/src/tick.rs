@@ -205,6 +205,7 @@ fn tick_influences(arena: &Arena, sites: &mut Sites, locations: &Locations) {
     crate::sites::propagate_influences(arena, sites, &sources);
 }
 
+#[derive(Clone, Copy)]
 enum PressureEventType {
     SpawnFarmer,
 }
@@ -245,7 +246,7 @@ fn tick_pressures(agents: &mut Pressurables, is_new_day: bool) -> Vec<PressureEv
                         .current
                         .set(trigger.target, (current - trigger.subtract).max(0.));
                     events.push(PressureEvent {
-                        typ: PressureEventType::SpawnFarmer,
+                        typ: trigger.event,
                         target: agent.entity,
                     });
                 }
@@ -290,7 +291,6 @@ fn handle_pressure_events<'a>(
                         size: 1.,
                         movement_speed: 2.,
                         layer: 1,
-                        has_goods: true,
                     }),
                     behavior: Some(CreateBehavior {
                         base: Some(target_entity.party.unwrap()),
@@ -650,7 +650,6 @@ struct CreateParty<'a> {
     size: f32,
     movement_speed: f32,
     layer: u8,
-    has_goods: bool,
 }
 
 struct CreateBehavior {
@@ -725,7 +724,6 @@ impl<'a> TickCommands<'a> {
                 size,
                 movement_speed: 0.,
                 layer: 0,
-                has_goods: false,
             }),
             pressure_agent: Some(CreatePressureAgent { pressures }),
             ..Default::default()
@@ -748,7 +746,6 @@ impl<'a> TickCommands<'a> {
                 size: 1.,
                 movement_speed: 2.5,
                 layer: 1,
-                has_goods: true,
             }),
             ..Default::default()
         });
@@ -808,10 +805,7 @@ fn process_entity_create_commands<'a>(
                     return None;
                 }
             };
-            let mut good_stock = Default::default();
-            if args.has_goods {
-                good_stock = sim.good_types.keys().map(|x| (x, 0.0)).collect();
-            }
+
             let id = sim.parties.insert(PartyData {
                 entity,
                 location: None,
@@ -822,7 +816,7 @@ fn process_entity_create_commands<'a>(
                 layer: args.layer,
                 movement_speed: args.movement_speed,
                 movement: PartyMovement::default(),
-                good_stock,
+                good_stock: GoodStock::new(&sim.good_types),
             });
             Some(id)
         });
@@ -940,7 +934,7 @@ mod tick_behaviors {
                     }
                     !validation.is_over
                 })
-                .or_else(|| decide_task(sim, &behavior.goal, my_party, &behavior.memory));
+                .or_else(|| decide_task(sim, &behavior.goal, &behavior.memory));
         }
 
         for (_, behavior) in &behaviors {
@@ -988,12 +982,7 @@ mod tick_behaviors {
         behavior: &mut Behavior,
         effects: &mut Effects,
     ) {
-        if task.remember {
-            behavior.memory.tasks.push_back(TaskMemory {
-                target: task.target,
-                timestamp: sim.date,
-            });
-        }
+        behavior.memory.state = task.on_complete_state;
 
         if task.despawn_on_complete {
             behavior.request_despawn = true;
@@ -1021,42 +1010,47 @@ mod tick_behaviors {
         }
     }
 
-    fn decide_task(
-        sim: &Simulation,
-        goal: &Goal,
-        my_party: &PartyData,
-        memory: &BehaviorMemory,
-    ) -> Option<Task> {
+    fn decide_task(sim: &Simulation, goal: &Goal, memory: &BehaviorMemory) -> Option<Task> {
         match goal {
             Goal::Idle => None,
             &Goal::LocalTrade { base } => {
+                const STATE_BEGIN: usize = 0;
+                const STATE_OUTGOING: usize = 1;
+                const STATE_RETURING: usize = 2;
                 let base_party = sim.parties.get(base)?;
                 // Are we on the outgoing or the return leg?
                 // Go home if we are not home
-                Some(if memory.tasks.is_empty() || memory.tasks.len() > 1 {
-                    // If we already had traded once (by completing the outgoing task), mark for death
-                    let is_returning = !memory.tasks.is_empty();
-                    Task {
-                        target: base,
-                        give_away_to_target: is_returning,
-                        trade_with_target: !is_returning,
-                        despawn_on_complete: is_returning,
-                        remember: true,
-                        ..Default::default()
-                    }
-                } else {
-                    // Set out from home
-                    let site = base_party.position.as_site()?;
-                    let target = sim.sites[site]
-                        .influences
-                        .top_source(InfluenceKind::Market)?;
-                    Task {
-                        target,
-                        remember: true,
-                        trade_with_target: true,
-                        ..Default::default()
-                    }
-                })
+                Some(
+                    if memory.state == STATE_BEGIN || memory.state == STATE_RETURING {
+                        // If we already had traded once (by completing the outgoing task), mark for death
+                        let is_returning = memory.state == STATE_RETURING;
+                        let on_complete_state = if !is_returning {
+                            STATE_OUTGOING
+                        } else {
+                            STATE_RETURING
+                        };
+                        Task {
+                            target: base,
+                            give_away_to_target: is_returning,
+                            trade_with_target: !is_returning,
+                            despawn_on_complete: is_returning,
+                            on_complete_state,
+                            ..Default::default()
+                        }
+                    } else {
+                        // Set out from home
+                        let site = base_party.position.as_site()?;
+                        let target = sim.sites[site]
+                            .influences
+                            .top_source(InfluenceKind::Market)?;
+                        Task {
+                            target,
+                            on_complete_state: STATE_RETURING,
+                            trade_with_target: true,
+                            ..Default::default()
+                        }
+                    },
+                )
             }
         }
     }
@@ -1075,21 +1069,19 @@ mod transfer {
     pub fn resolve(sim: &mut Simulation, events: impl IntoIterator<Item = Event>) {
         for event in events {
             let source_data = &mut sim.parties[event.source];
-            let target_goods = source_data.good_stock.clone();
-            source_data.good_stock.values_mut().for_each(|x| *x = 0.0);
+            let bundle = source_data.good_stock.amount.clone();
+            source_data.good_stock.clear();
             let target_data = &mut sim.parties[event.target];
             match target_data.location {
                 Some(location) => {
                     let market = &mut sim.locations[location].market;
-                    for (good_id, value) in target_goods {
+                    for (good_id, value) in bundle {
                         market.goods[good_id].stock += value;
                         market.goods[good_id].stock_delta += value;
                     }
                 }
                 None => {
-                    for (good_id, value) in target_goods {
-                        target_data.good_stock[good_id] += value;
-                    }
+                    target_data.good_stock.add_goods(bundle);
                 }
             }
         }
@@ -1138,14 +1130,9 @@ mod trade {
                     .good_types
                     .keys()
                     .map(|good_id| {
-                        let quantity = party_data
-                            .good_stock
-                            .get(good_id)
-                            .copied()
-                            .unwrap_or_default();
+                        let quantity = party_data.good_stock[good_id];
                         let data = TraderGood {
                             quantity,
-                            at_price: 0.0,
                             can_sell: true,
                             can_buy: true,
                         };
@@ -1161,7 +1148,6 @@ mod trade {
     #[derive(Clone, Copy, Default)]
     struct TraderGood {
         quantity: f64,
-        at_price: f64,
         can_sell: bool,
         can_buy: bool,
     }

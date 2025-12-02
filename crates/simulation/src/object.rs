@@ -132,10 +132,14 @@ impl Object {
         }
     }
 
-    pub fn list<'a>(&'a self, tag: &str) -> &'a [Object] {
+    pub fn try_list<'a>(&'a self, tag: &str) -> Option<&'a [Object]> {
         match self.0.get(tag) {
-            Some(Value::List(items)) => items.as_slice(),
-            _ => &[],
+            Some(Value::List(items)) => Some(items.as_slice()),
+            _ => None,
         }
+    }
+
+    pub fn list<'a>(&'a self, tag: &str) -> &'a [Object] {
+        self.try_list(tag).unwrap_or_default()
     }
 }
